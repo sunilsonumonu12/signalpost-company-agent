@@ -1,0 +1,351 @@
+#!/usr/bin/env python3
+"""Single evaluator entrypoint for the full Signalpost agent pipeline.
+
+Chains every stage of the pipeline into one command, as required by the
+"reproducible setup ... one evaluator command" hard gate:
+
+  1. registry batch (identity, financials, financial_history, roles, group,
+     locations, single-page website fetch) -- required, no optional deps.
+  2. website discovery (Tavily, then Exa) for companies still missing a site --
+     runs only if TAVILY_API_KEY / EXA_API_KEY is set (server-side secret, per
+     the locked evaluator budget's own requirement).
+  3. deep multi-page site crawl (scrapy) for every company with a website
+     candidate -- best-effort: skipped cleanly if the `scrapy` package isn't
+     installed in this environment, rather than failing the whole run.
+  4. company-owned activity/news extraction from the crawl -- pure-Python,
+     no optional dependency, always attempted.
+  5. official annual-report OCR workforce extraction -- best-effort per
+     company already (see run_annual_report_workforce_connector.py's own
+     broad except); still guarded here so a totally missing tesseract/poppler
+     install degrades to "no workforce data" rather than noisy per-company
+     errors for the whole batch.
+  6. claims/evidence envelope conversion, folding in every observation file
+     collected above.
+
+Every optional stage is best-effort: a failure is logged and the pipeline
+moves on rather than losing everything already collected. The registry batch
+(step 1) and the final conversion (step 6) are the only required stages --
+without them there is no submission at all.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = ROOT.parent
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
+from norway_company_agent.telemetry import aggregate_company_metrics, apply_discovery_report, build_metrics, read_events  # noqa: E402
+
+
+def run(cmd: list[str], *, optional: bool = False) -> bool:
+    print("+ " + " ".join(cmd), file=sys.stderr)
+    try:
+        subprocess.run(cmd, check=True)
+        return True
+    except subprocess.CalledProcessError as exc:
+        if not optional:
+            raise
+        print(f"  (optional stage failed, continuing: {exc})", file=sys.stderr)
+        return False
+
+
+def read_jsonl(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def write_jsonl(path: Path, rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+
+def merge_profiles(base: list[dict], updated: list[dict], *, only_if_has: str | None = None) -> int:
+    """Merge updated rows into base by organisation_number. Returns count merged."""
+    updated_by_org = {row["organisation_number"]: row for row in updated}
+    merged = 0
+    for index, row in enumerate(base):
+        candidate = updated_by_org.get(row["organisation_number"])
+        if not candidate:
+            continue
+        if only_if_has and not (candidate.get("evidence") or {}).get(only_if_has):
+            continue
+        base[index] = candidate
+        merged += 1
+    return merged
+
+
+def backfill_top_level_website(profiles: list[dict]) -> None:
+    for row in profiles:
+        if row.get("website"):
+            continue
+        web = row.get("evidence", {}).get("website") or {}
+        if web.get("status") == "available":
+            value = web.get("value") or {}
+            row["website"] = value.get("final_url") or web.get("source_url")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run the full Signalpost agent end to end.")
+    parser.add_argument("--organisations", required=True, help="JSONL/JSON/text list of organisation numbers")
+    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--expected-count", type=int, required=True)
+    parser.add_argument("--overwrite", action="store_true", help="Replace existing output for this run ID")
+    parser.add_argument("--discovery-limit", type=int, default=None, help="Cap discovery queries; default is expected-count")
+    parser.add_argument("--skip-deep-crawl", dest="skip_deep_crawl", action="store_true", default=True, help="Skip the scrapy multi-page crawl stage (default for V1 submission)")
+    parser.add_argument("--include-deep-crawl", dest="skip_deep_crawl", action="store_false", help="Enable the crawler for V2 work")
+    parser.add_argument("--skip-workforce-ocr", dest="skip_workforce_ocr", action="store_true", default=True, help="Skip the annual-report OCR workforce stage (default for V1 submission)")
+    parser.add_argument("--include-workforce-ocr", dest="skip_workforce_ocr", action="store_false", help="Enable annual-report OCR for V2 work")
+    parser.add_argument("--python", default=sys.executable)
+    args = parser.parse_args()
+
+    output_dir = Path(args.output_dir)
+    request_log = output_dir / "request-log.jsonl"
+    existing_output = output_dir.exists() and any(output_dir.iterdir())
+    if existing_output and args.overwrite:
+        print(f'Overwriting existing output for run_id "{args.run_id}" at {output_dir}.', file=sys.stderr)
+        for child in output_dir.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+    elif existing_output:
+        original_output_dir = output_dir
+        duplicate_index = 1
+        while True:
+            candidate = original_output_dir.parent / f"{original_output_dir.name}-duplicate-{duplicate_index}"
+            if not candidate.exists():
+                output_dir = candidate
+                request_log = output_dir / "request-log.jsonl"
+                print(
+                    f'Run ID "{args.run_id}" already has output at {original_output_dir}; '
+                    f"saving this duplicate run in {output_dir}.",
+                    file=sys.stderr,
+                )
+                break
+            duplicate_index += 1
+    output_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["SIGNALPOST_REQUEST_LOG"] = str(request_log)
+    os.environ["SIGNALPOST_RUN_ID"] = args.run_id
+    os.environ["SIGNALPOST_CALLER_MODULE"] = "run_agent"
+    discovery_limit = args.discovery_limit or args.expected_count
+    started_monotonic = time.monotonic()
+    started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    stages_run: list[str] = []
+    stage_metrics: list[dict] = []
+    discovery_reports: list[dict] = []   # Step 3: one entry per provider that ran
+
+    def run_stage(name: str, cmd: list[str], *, optional: bool = False) -> bool:
+        stage_started = time.monotonic()
+        stage_started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        ok = run(cmd, optional=optional)
+        stage_metrics.append({
+            "stage": name,
+            "started_at": stage_started_at,
+            "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "duration_ms": int((time.monotonic() - stage_started) * 1000),
+            "requests": 0,
+            "errors": 0,
+        })
+        return ok
+
+    # 1. Registry batch: identity, financials, financial_history, roles, group,
+    # locations, single-page website. Required.
+    profiles_path = output_dir / "profiles.jsonl"
+    run_stage("registry", [
+        args.python, str(ROOT / "run_competition_batch.py"),
+        "--organisations", args.organisations,
+        "--profiles-output", str(profiles_path),
+        "--output", str(output_dir / "registry-envelopes.jsonl"),
+        "--report", str(output_dir / "registry-report.json"),
+        "--run-id", args.run_id,
+        "--expected-count", str(args.expected_count),
+        "--modules", "registry,accounting_obligation,registry_live,financials,financial_history,roles,group,locations,website",
+    ])
+    stages_run.append("registry_batch")
+
+    # 2. Website discovery: Tavily, then Exa, for whatever's still missing.
+    for name, script, env_var in (("tavily", "run_tavily_discovery.py", "TAVILY_API_KEY"), ("exa", "run_exa_discovery.py", "EXA_API_KEY")):
+        if not os.environ.get(env_var, "").strip():
+            print(f"No {env_var} set -- skipping {name} discovery.", file=sys.stderr)
+            continue
+        discovered_path = output_dir / f"profiles-with-{name}.jsonl"
+        discovery_report_path = output_dir / f"{name}-discovery-report.json"
+        ok = run_stage("discovery", [
+            args.python, str(ROOT / script),
+            "--input", str(profiles_path),
+            "--output", str(discovered_path),
+            "--report", str(discovery_report_path),
+            "--limit", str(discovery_limit),
+            "--promote-verified",
+        ], optional=True)
+        if ok:
+            profiles_path = discovered_path
+            stages_run.append(f"{name}_discovery")
+            # Step 3: read the connector report and merge per-company discovery
+            # outcomes into the telemetry companies dict so run-metrics.json
+            # reflects verified/quarantined/abstained rather than just "searched".
+            # API key values and query text are never present in these reports.
+            if discovery_report_path.exists():
+                try:
+                    discovery_report = json.loads(discovery_report_path.read_text(encoding="utf-8"))
+                    discovery_reports.append(discovery_report)
+                except (json.JSONDecodeError, OSError):
+                    pass  # Non-fatal: telemetry will fall back to request-log counts.
+
+    profiles = read_jsonl(profiles_path)
+    backfill_top_level_website(profiles)
+    write_jsonl(output_dir / "profiles.jsonl", profiles)
+    profiles_path = output_dir / "profiles.jsonl"
+
+    # 3. Deep multi-page crawl (scrapy) of every company with a website
+    # candidate. Best-effort: scrapy may not be installed everywhere.
+    activity_obs_path = output_dir / "activity-observations.jsonl"
+    news_obs_path = output_dir / "news-observations.jsonl"
+    careers_obs_path = output_dir / "careers-observations.jsonl"
+    has_scrapy = False
+    if not args.skip_deep_crawl:
+        try:
+            import scrapy  # noqa: F401
+            has_scrapy = True
+        except ImportError:
+            has_scrapy = False
+
+    if has_scrapy:
+        crawl_input = output_dir / "crawl-input.jsonl"
+        write_jsonl(crawl_input, [row for row in profiles if row.get("website")])
+        crawled_path = output_dir / "profiles-crawled.jsonl"
+        ok = run_stage("crawling", [
+            args.python, str(ROOT / "run_scrapy_websites.py"),
+            "--input", str(crawl_input),
+            "--output", str(crawled_path),
+            "--events", str(output_dir / "crawl-events.jsonl"),
+            "--jobdir", str(output_dir / "crawl-jobdir"),
+            "--report", str(output_dir / "crawl-report.json"),
+        ], optional=True)
+        if ok:
+            crawled = read_jsonl(crawled_path)
+            merge_profiles(profiles, crawled)
+            write_jsonl(profiles_path, profiles)
+            stages_run.append("deep_crawl")
+
+            # 4. Activity/news extraction from the deepened crawl. Pure Python,
+            # always attempted once there's a crawl to extract from.
+            run_stage("claims/evidence", [args.python, str(ROOT / "extract_company_site_activity.py"), "--profiles", str(profiles_path), "--output", str(activity_obs_path), "--report", str(output_dir / "activity-report.json")], optional=True)
+            run_stage("claims/evidence", [args.python, str(ROOT / "extract_company_site_news.py"), "--profiles", str(profiles_path), "--output", str(news_obs_path), "--report", str(output_dir / "news-report.json")], optional=True)
+            run_stage("claims/evidence", [args.python, str(ROOT / "extract_company_site_careers.py"), "--profiles", str(profiles_path), "--output", str(careers_obs_path), "--report", str(output_dir / "careers-report.json")], optional=True)
+            if activity_obs_path.exists():
+                stages_run.append("site_activity")
+            if news_obs_path.exists():
+                stages_run.append("site_news")
+            if careers_obs_path.exists():
+                stages_run.append("site_careers")
+    else:
+        print("scrapy not installed -- skipping deep crawl and activity/news extraction.", file=sys.stderr)
+
+    # 5. Official annual-report OCR workforce extraction. Already degrades
+    # per-company internally; skip the whole stage only if asked to.
+    workforce_obs_path = output_dir / "workforce-observations.jsonl"
+    if not args.skip_workforce_ocr:
+        orgs_path = output_dir / "all-orgs.txt"
+        orgs_path.write_text("\n".join(row["organisation_number"] for row in profiles), encoding="utf-8")
+        ok = run([
+            args.python, str(ROOT / "run_annual_report_workforce_connector.py"),
+            "--profiles", str(profiles_path),
+            "--organisations", str(orgs_path),
+            "--output", str(workforce_obs_path),
+            "--cache", str(output_dir / "workforce-cache"),
+            "--report", str(output_dir / "workforce-report.json"),
+        ], optional=True)
+        if ok:
+            stages_run.append("workforce_ocr")
+
+    # 5b. Prior-year comparative financial figures, recovered from the same
+    # annual-report OCR cache the workforce stage just populated -- no new
+    # downloads or OCR, so this only runs if that cache exists.
+    prior_year_obs_path = output_dir / "prior-year-financials-observations.jsonl"
+    workforce_cache_dir = output_dir / "workforce-cache"
+    if not args.skip_workforce_ocr and workforce_cache_dir.exists():
+        ok = run([
+            args.python, str(ROOT / "extract_prior_year_financials.py"),
+            "--profiles", str(profiles_path),
+            "--cache", str(workforce_cache_dir),
+            "--output", str(prior_year_obs_path),
+            "--report", str(output_dir / "prior-year-financials-report.json"),
+        ], optional=True)
+        if ok:
+            stages_run.append("prior_year_financials")
+
+    completed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    # 6. Claims/evidence conversion, folding in every observation file collected.
+    envelopes_path = output_dir / "envelopes.jsonl"
+    convert_cmd = [
+        args.python, str(ROOT / "build_output_contract.py"),
+        "--profiles", str(profiles_path),
+        "--output", str(envelopes_path),
+        "--run-id", args.run_id,
+        "--started-at", started_at,
+        "--completed-at", completed_at,
+    ]
+    for obs_path in (activity_obs_path, news_obs_path, careers_obs_path, workforce_obs_path, prior_year_obs_path):
+        if obs_path.exists():
+            convert_cmd += ["--observations", str(obs_path)]
+    run_stage("claims/evidence", convert_cmd)
+    stages_run.append("claims_conversion")
+
+    # 7. Offline HTML viewer -- best-effort, never blocks the submission artifact.
+    viewer_path = output_dir / "viewer.html"
+    ok = run_stage("output", [
+        args.python, str(ROOT / "build_viewer.py"),
+        "--envelopes", str(envelopes_path),
+        "--profiles", str(profiles_path),
+        "--output", str(viewer_path),
+    ], optional=True)
+    if ok:
+        stages_run.append("viewer")
+
+    summary = {
+        "run_id": args.run_id,
+        "started_at": started_at,
+        "completed_at": completed_at,
+        "stages_run": stages_run,
+        "profiles": str(profiles_path),
+        "envelopes": str(envelopes_path),
+        "metrics": str(output_dir / "run-metrics.json"),
+    }
+    (output_dir / "run-summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    completed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    all_events = read_events(request_log)
+    foreign_run_ids = sorted({str(event.get("run_id")) for event in all_events if event.get("run_id") != args.run_id})
+    if foreign_run_ids:
+        print(
+            f"Warning: request log contains events for other run_id values: {', '.join(foreign_run_ids)}; "
+            f'filtering metrics to run_id "{args.run_id}".',
+            file=sys.stderr,
+        )
+    events = [event for event in all_events if event.get("run_id") == args.run_id]
+    companies = aggregate_company_metrics(events)
+    # Step 3: merge per-company discovery outcomes from connector reports into
+    # the companies dict so run-metrics.json shows verified/quarantined/abstained
+    # rather than relying solely on the request-log-derived "searched" placeholder.
+    for discovery_report in discovery_reports:
+        apply_discovery_report(companies, discovery_report)
+    metrics = build_metrics(events=events, run_id=args.run_id, input_file=args.organisations, input_count=args.expected_count, started_at=started_at, completed_at=completed_at, duration_ms=int((time.monotonic() - started_monotonic) * 1000), stage_metrics=stage_metrics, per_company=companies, command=sys.argv, discovery_reports=discovery_reports)
+    metrics["stages"] = [{**stage, "requests": sum(1 for event in events if event.get("timestamp", "") >= stage["started_at"] and event.get("timestamp", "") <= stage["completed_at"]), "errors": sum(1 for event in events if not event.get("success") and event.get("timestamp", "") >= stage["started_at"] and event.get("timestamp", "") <= stage["completed_at"])} for stage in stage_metrics]
+    (output_dir / "run-metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(summary, indent=2))
+
+
+if __name__ == "__main__":
+    main()

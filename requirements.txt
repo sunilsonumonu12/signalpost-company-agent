@@ -1,0 +1,5 @@
+# Python Version: 3.10+ required
+beautifulsoup4>=4.13,<5
+extruct>=0.18,<1
+tldextract>=5,<6
+trafilatura>=2,<3

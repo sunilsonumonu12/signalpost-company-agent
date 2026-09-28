@@ -136,6 +136,7 @@ def main() -> None:
             duplicate_index += 1
     output_dir.mkdir(parents=True, exist_ok=True)
     os.environ["SIGNALPOST_REQUEST_LOG"] = str(request_log)
+    os.environ["SIGNALPOST_SNAPSHOT_DIR"] = str((output_dir / "snapshots").resolve())
     os.environ["SIGNALPOST_RUN_ID"] = args.run_id
     os.environ["SIGNALPOST_CALLER_MODULE"] = "run_agent"
     discovery_limit = args.discovery_limit or args.expected_count
@@ -146,6 +147,7 @@ def main() -> None:
     discovery_reports: list[dict] = []   # Step 3: one entry per provider that ran
 
     def run_stage(name: str, cmd: list[str], *, optional: bool = False) -> bool:
+        (output_dir / "progress-stage.txt").write_text(name + "\n", encoding="utf-8")
         stage_started = time.monotonic()
         stage_started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         ok = run(cmd, optional=optional)
@@ -170,6 +172,7 @@ def main() -> None:
         "--report", str(output_dir / "registry-report.json"),
         "--run-id", args.run_id,
         "--expected-count", str(args.expected_count),
+        "--progress-file", str(output_dir / "progress.json"),
         "--modules", "registry,accounting_obligation,registry_live,financials,financial_history,roles,group,locations,website",
     ])
     stages_run.append("registry_batch")
@@ -305,15 +308,19 @@ def main() -> None:
     stages_run.append("claims_conversion")
 
     # 7. Offline HTML viewer -- best-effort, never blocks the submission artifact.
-    viewer_path = output_dir / "viewer.html"
-    ok = run_stage("output", [
-        args.python, str(ROOT / "build_viewer.py"),
-        "--envelopes", str(envelopes_path),
-        "--profiles", str(profiles_path),
-        "--output", str(viewer_path),
-    ], optional=True)
-    if ok:
-        stages_run.append("viewer")
+    viewer_builder = ROOT / "build_viewer.py"
+    if viewer_builder.exists():
+        viewer_path = output_dir / "viewer.html"
+        ok = run_stage("output", [
+            args.python, str(viewer_builder),
+            "--envelopes", str(envelopes_path),
+            "--profiles", str(profiles_path),
+            "--output", str(viewer_path),
+        ], optional=True)
+        if ok:
+            stages_run.append("viewer")
+    else:
+        print("Offline viewer builder not found -- skipping viewer.", file=sys.stderr)
 
     summary = {
         "run_id": args.run_id,

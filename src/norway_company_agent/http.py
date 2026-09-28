@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
+import socket
+import ssl
 import time
 import urllib.error
 import urllib.request
@@ -30,6 +32,20 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+_NETWORK_ERRORS = (
+    ConnectionResetError,
+    ConnectionAbortedError,
+    ConnectionRefusedError,
+    TimeoutError,
+    socket.timeout,
+    socket.gaierror,
+    ssl.SSLError,
+    ssl.CertificateError,
+    OSError,
+    urllib.error.URLError,
+)
+
+
 def fetch_json(
     url: str,
     *,
@@ -47,7 +63,18 @@ def fetch_json(
         )
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
-                raw = response.read()
+                try:
+                    raw = response.read()
+                except _NETWORK_ERRORS as exc:
+                    elapsed = int((time.monotonic() - started) * 1000)
+                    err_name = type(exc).__name__
+                    record_request(module=module, provider="BRREG" if "brreg.no" in url else "http", operation="GET", success=False, status=0, duration_ms=elapsed, organisation_number=organisation_number, error=err_name, attempt=attempt + 1, retry=attempt > 0, retry_reason=err_name if attempt > 0 else None)
+                    last_error = err_name
+                    if organisation_number and attempt + 1 < attempts:
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] RETRY company {organisation_number} | module={module} | attempt={attempt + 1}/{attempts} | {err_name}", flush=True)
+                    if attempt + 1 < attempts:
+                        time.sleep(0.4 * (2**attempt))
+                    continue
                 elapsed = int((time.monotonic() - started) * 1000)
                 try:
                     body = json.loads(raw)
@@ -60,14 +87,24 @@ def fetch_json(
                 return result
         except urllib.error.HTTPError as exc:
             elapsed = int((time.monotonic() - started) * 1000)
-            raw = exc.read()
+            try:
+                raw = exc.read()
+            except Exception:
+                raw = b""
             record_request(module=module, provider="BRREG" if "brreg.no" in url else "http", operation="GET", success=False, status=exc.code, duration_ms=elapsed, organisation_number=organisation_number, error=f"HTTP {exc.code}", attempt=attempt + 1, retry=attempt > 0, retry_reason=f"HTTP {exc.code}" if attempt > 0 else None)
             if exc.code in {404, 410}:
-                return FetchResult(url, exc.code, elapsed, len(raw), error=f"HTTP {exc.code}", content_sha256=hashlib.sha256(raw).hexdigest(), retrieved_at=_utc_now(), failure_class=classify_request(success=False, status=exc.code, error=f"HTTP {exc.code}"))
+                return FetchResult(url, exc.code, elapsed, len(raw), error=f"HTTP {exc.code}", content_sha256=hashlib.sha256(raw).hexdigest() if raw else None, retrieved_at=_utc_now(), failure_class=classify_request(success=False, status=exc.code, error=f"HTTP {exc.code}"))
             last_error = f"HTTP {exc.code}"
-        except (urllib.error.URLError, TimeoutError) as exc:
-            record_request(module=module, provider="BRREG" if "brreg.no" in url else "http", operation="GET", success=False, status=0, duration_ms=int((time.monotonic() - started) * 1000), organisation_number=organisation_number, error=type(exc).__name__, attempt=attempt + 1, retry=attempt > 0, retry_reason=type(exc).__name__ if attempt > 0 else None)
-            last_error = type(exc).__name__
+            if organisation_number and attempt + 1 < attempts:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] RETRY company {organisation_number} | module={module} | attempt={attempt + 1}/{attempts} | HTTP {exc.code}", flush=True)
+        except _NETWORK_ERRORS as exc:
+            err_name = type(exc).__name__
+            record_request(module=module, provider="BRREG" if "brreg.no" in url else "http", operation="GET", success=False, status=0, duration_ms=int((time.monotonic() - started) * 1000), organisation_number=organisation_number, error=err_name, attempt=attempt + 1, retry=attempt > 0, retry_reason=err_name if attempt > 0 else None)
+            last_error = err_name
+            if organisation_number and attempt + 1 < attempts:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] RETRY company {organisation_number} | module={module} | attempt={attempt + 1}/{attempts} | {err_name}", flush=True)
         if attempt + 1 < attempts:
             time.sleep(0.4 * (2**attempt))
+    if organisation_number:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] FAILED company {organisation_number} | module={module} | error={last_error}", flush=True)
     return FetchResult(url, 0, 0, 0, error=last_error, retrieved_at=_utc_now(), failure_class=classify_request(success=False, status=0, error=last_error))

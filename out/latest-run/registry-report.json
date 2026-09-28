@@ -1,0 +1,22 @@
+{
+  "run_id": "run-20260928-054142-602382",
+  "expected_count": 1000,
+  "profiles_written": 1000,
+  "envelopes_written": 1000,
+  "modules": [
+    "accounting_obligation",
+    "financial_history",
+    "financials",
+    "group",
+    "locations",
+    "registry",
+    "registry_live",
+    "roles",
+    "website"
+  ],
+  "status": "ok",
+  "successful": 1000,
+  "failed": 0,
+  "failed_orgs": [],
+  "total_retries": 42
+}

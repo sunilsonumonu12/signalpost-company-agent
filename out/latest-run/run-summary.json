@@ -1,0 +1,12 @@
+{
+  "run_id": "run-20260928-054142-602382",
+  "started_at": "2026-09-28T05:41:42Z",
+  "completed_at": "2026-09-28T05:58:07Z",
+  "stages_run": [
+    "registry_batch",
+    "claims_conversion"
+  ],
+  "profiles": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\profiles.jsonl",
+  "envelopes": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\envelopes.jsonl",
+  "metrics": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\run-metrics.json"
+}

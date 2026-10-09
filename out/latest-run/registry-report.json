@@ -1,8 +1,8 @@
 {
-  "run_id": "run-20260928-054142-602382",
-  "expected_count": 1000,
-  "profiles_written": 1000,
-  "envelopes_written": 1000,
+  "run_id": "run-20261006-045357-514722",
+  "expected_count": 20,
+  "profiles_written": 20,
+  "envelopes_written": 20,
   "modules": [
     "accounting_obligation",
     "financial_history",
@@ -15,8 +15,16 @@
     "website"
   ],
   "status": "ok",
-  "successful": 1000,
+  "successful": 20,
   "failed": 0,
   "failed_orgs": [],
-  "total_retries": 42
+  "total_retries": 0,
+  "identity_decisions": {
+    "REVIEW": 1,
+    "REJECT": 1
+  },
+  "validation": {
+    "website_values_accepted": 1,
+    "website_values_rejected": 0
+  }
 }

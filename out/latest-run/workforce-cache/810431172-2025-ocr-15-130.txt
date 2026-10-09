@@ -1,0 +1,484 @@
+DEN
+== Brønnøysundregistrene
+ÅRSREGNSKAP FOR REGNSKAPSÅRET 2025 - GENERELL INFORMASJON
+Journalnummer: 2026 601852
+Virksomheten
+Organisasjonsnummer: 810 431 172
+Organisasjonsform: Aksjeselskap
+Foretaksnavn: AS SCAN-WOOD
+Forretningsadresse: Repsetvegen 155
+2230 SKOTTERUD
+Regnskapsår
+Årsregnskapets periode: 01.01.2025 - 31.12.2025
+Konsern
+Morselskap i konsern: Nei
+Regnskapsregler
+Regler for små foretak benyttet: Ja
+Benyttet ved utarbeidelsen av
+årsregnskapet: Reqnskapslovens alminnelige regler
+Årsregnskapet fastsatt av kompetent organ
+Bekreftet av: Tor Lindkjølen
+Dato for fastsettelse av årsregnskapet: 28.06.2026
+Revisjon
+Selskapet har besluttet at årsregnskapet
+ikke skal revideres: Ja
+Årsregnskapet er utarbeidet av ekstern
+autorisert regnskapsfører: Ja
+Ekstern autorisert regnskapsfører har i
+løpet av regnskapsåret bistått ved den
+løpende reqnskapsføringen eller utført
+andre tjenester for selskapet enn å
+utarbeide årsregnskapet: Ja
+Grunnlag for avgivelse
+År 2025: Årsregnskap er elektronisk innlevert.
+År 2024: Tall er hentet fra elektronisk innlevert årsregnskap fra 2025.
+Virksomheten sitt øverste organ er ansvarlig for at årsregnskapet er signert.
+Det er mulig å levere årsregnskap uten signatur fordi sikkerheten for rett
+rapportering er ivaretatt ved at innsenderen har rolle/rettighet for innsending
+i Altinn. Navnet på representanten, som bekrefter at årsregnskapet er godkjent,
+er i tillegg oppgitt.
+Brønnøysundregistrene, 30.06.2026
+Postadresse: Postboks 900, 8910 Brønnøysund
+Telefon: 75 00 75 00
+E-post: firmapostØbrreg.no Internett: www.brreg.no
+Organisasjonsnummer: 974 760 673
+
+Organisasjonsnr: 810 431 172
+
+AS SCAN-WOOD
+
+RESULTATREGNSKAP
+
+Beløp i: NOK Note 2025 2024
+
+RESULTATREGNSKAP
+
+Inntekter
+
+Salgsinntekt 8 000 60 000
+
+Annen driftsinntekt 255 650
+
+Sum inntekter 263 650 60 000
+
+Kostnader
+
+Varekostnad 3 830
+
+Lønnskostnad 4
+
+Avskrivning av
+
+driftsmidler og
+
+immaterielle eiendeler 5
+
+Annen driftskostnad 197 983 149 505
+
+Sum kostnader 197 983 150 335
+
+Driftsresultat 65 667 -90 335
+
+Finansinntekter og
+
+finanskostnader
+
+Annen renteinntekt 12 152
+
+Annen finansinntekt 741 877
+
+Sum finansinntekter 753 1 029
+
+Annen rentekostnad 30 000 8
+
+Annen finanskostnad 56
+
+Sum finanskostnader 30 056 8
+
+Netto finans -29 303 1 021
+
+Resultat før skattekostnad 36 364 -89 314
+
+Skattekostnad på resultat 6
+
+Årsresultat 7 36 364 -89 314
+
+Årsresultat etter
+
+minoritetsinteresser 36 364 -89 314
+
+Totalresultat 36 364 -89 314
+
+Overføringer og
+
+disponeringer
+
+Avsatt til annen
+
+egenkapital 36 364
+
+Overført fra annen
+
+egenkapital -89 314
+
+Sum overføringer og
+
+disponeringer 36 364 -89 314
+Utskriftsdato 30.06.2026 Organisasjonsnr 810 431 172 Side 1 av 3
+
+Organisasjonsnr: 810 431 172
+
+AS SCAN-WOOD
+
+BALANSE
+
+Beløp i: NOK Note 2025 2024
+
+BALANSE - EIENDELER
+
+Anleggsmidler
+
+Immaterielle eiendeler
+
+Utsatt skattefordel 6
+
+Varige driftsmidler
+
+Tomter, bygninger o.a.
+
+fast eiendom 5 136 543 136 543
+
+Maskiner og anlegg 5
+
+Driftsløsøre, inventar o.
+
+a. utstyr 5
+
+Sum varige driftsmidler 5 136 543 136 543
+
+Finansielle anleggsmidler
+
+Investeringer i
+
+tilknyttet selskap 49 000 49 000
+
+Lån til tilknyttet
+
+selskap og felles
+
+kontrollert virksomhet 50 000
+
+Investeringer i aksjer og
+
+andeler 352 500 337 500
+
+Andre langsiktige
+
+fordringer 1 200 000
+
+Sum finansielle
+
+anleggsmidler 1 651 500 386 500
+
+Sum anleggsmidler 1 788 043 523 043
+
+Omløpsmidler
+
+Varer
+
+Sum varer 3 35 000 35 000
+
+Fordringer
+
+Kundefordringer 650 000
+
+Andre kortsiktige
+
+fordringer 25 566 104 004
+
+Sum fordringer 675 566 104 004
+
+Investeringer
+
+Andre finansielle
+
+instrumenter 1 230 250
+
+Sum investeringer 1 230 250
+
+Bankinnskudd, kontanter
+
+og lignende
+
+Bankinnskudd, kontanter o.
+
+L.: 19 043 63 179
+
+Sum bankinnskudd,
+
+kontanter og lignende 19 043 63 179
+Utskriftsdato 30.06.2026 Organisasjonsnr 810 431 172 Side 2 av 3
+
+Sum omløpsmidler 729 608 1 432 433
+
+SUM EIENDELER 2 517 651 1 955 476
+
+BALANSE - EGENKAPITAL OG
+
+GJELD
+
+Egenkapital
+
+Innskutt egenkapital
+
+Aksjekapital 8 210 000 210 000
+
+Sum innskutt egenkapital 210 000 210 000
+
+Opptjent egenkapital
+
+Annen egenkapital 9 742 962 706 599
+
+Sum opptjent egenkapital 742 962 706 599
+
+Sum egenkapital 7 952 962 916 599
+
+Gjeld
+
+Langsiktig gjeld
+
+Utsatt skatt 6
+
+Annen langsiktig gjeld
+
+Kortsiktig gjeld
+
+Leverandørgjeld 2 107 10 513
+
+Betalbar skatt 6
+
+Skyldig offentlige avgifter -344
+
+Kortsiktig konserngjeld 1 562 582 1 028 709
+
+Sum kortsiktig gjeld 1 564 689 1 038 877
+
+Sum gjeld 1 564 689 1 038 877
+
+SUM EGENKAPITAL OG GJELD 2 517 651 1 955 476
+Utskriftsdato 30.06.2026 Organisasjonsnr 810 431 172 Side 3 av 3
+
+Organisasjonsnr: 810 431 172
+
+AS SCAN-WOOD
+
+NOTEOPPLYSNINGER - SELSKAP - alle poster oppgitt i hele tall
+Note
+
+Antall årsverk i regnskapsåret
+
+0.00
+
+Årsregnskap 2025
+Ås Scan-wood
+Resultatregnskap
+Balanse
+Noter til regnskapet
+Org.nr.: 810 431 172
+
+Resultatregnskap
+As Scan-wood
+
+Driftsinntekter og driftskostnader Note 2025 2024
+Salgsinntekt 8 000 60 000
+Annen driftsinntekt 255 650 0
+Sum driftsinntekter 263 650 60 000
+Varekostnad 3 0 830
+Annen driftskostnad 197 983 149 505
+Sum driftskostnader 197 983 150 335
+Driftsresultat 65 667 -90 335
+Finansinntekter og finanskostnader
+
+Annen renteinntekt 12 152
+Annen finansinntekt 741 877
+Annen rentekostnad 30 000 8
+Annen finanskostnad 56 0
+Resultat av finansposter -29 303 1021
+Resultat før skattekostnad 36 364 -89 314
+Resultat 36 364 -89 314
+Årsoverskudd/Årsunderskudd 7 36 364 -89 314
+Overføringer
+
+Avsatt til annen egenkapital 36 364 0
+Overført fra annen egenkapital 0 89 314
+Sum overføringer 36 364 -89 314
+
+Balanse
+
+As Scan-wood
+Eiendeler Note 2025 2024
+Anleggsmidler
+Varige driftsmidler
+Tomter, bygninger o.a. fast eiendom 5 136 543 136 543
+Sum varige driftsmidler 3 136 543 136 543
+Finansielle anleggsmidler
+Investeringer i tilknyttet selskap 49 000 49 000
+Lån til tilknyttet selskap og felles kontrollert virksomhet 50 000 0
+Investeringer i aksjer og andeler 352 500 337 500
+Andre langsiktige fordringer 1 200 000 0
+Sum finansielle anleggsmidler 1 651 500 386 500
+Sum anleggsmidler 1 788 043 523 043
+Omløpsmidler
+Lager av varer og annen beholdning 3 35 000 35 000
+Fordringer
+Kundefordringer 650 000 0
+Andre kortsiktige fordringer 25 566 104 004
+Sum fordringer 675 566 104 004
+Andre finansielle instrumenter 0 1 230 250
+Sum investeringer 0 1 230 250
+Bankinnskudd, kontanter o.l. 19 043 63 179
+Sum omløpsmidler 729 608 1 432 433
+Sum eiendeler 2517 651 1 955 476
+
+Balanse
+
+As Scan-wood
+Egenkapital og gjeld Note 2025 2024
+Egenkapital
+Innskutt egenkapital
+Aksjekapital 8 210 000 210 000
+Sum innskutt egenkapital 210 000 210 000
+Opptjent egenkapital
+Annen egenkapital 9 742 962 706 599
+Sum opptjent egenkapital 742 962 706 599
+Sum egenkapital 7 952 962 916 599
+Gjeld
+Kortsiktig gjeld
+Leverandørgjeld 2107 10 513
+Skyldig offentlige avgifter 0 -344
+Annen kortsiktig gjeld 1 562 582 1 028 709
+Sum kortsiktig gjeld 1 564 689 1038 877
+Sum gjeld 1 564 689 1038 877
+Sum egenkapital og gjeld 2517 651 1 955 476
+
+Skotterud, 28.06.2026
+
+Styret i As Scan-wood
+
+Tor Lindkjølen
+styreleder/daglig leder
+
+As Scan-wood
+Org.nr.: 810 431 172
+Note 1 Regnskapsprinsipper
+Årsregnskapet er satt opp i samsvar med regnskapsloven. Det er utarbeidet etter norske regnskapsstandarder.
+Driftsinntekter og kostnader
+Inntektsføring skjer etter opptjeningsprinsippet som normalt vil være leveringstidspunktet for varer og
+tjenester. Kostnader medtas etter sammenstillingsprinsippet, dvs. at kostnader medtas 1 samme periode som
+tilhørende inntekter inntektsføres.
+Hovedregel for vurdering og klassifisering av eiendeler og gjeld
+Eiendeler bestemt til varig eie eller bruk er klassifisert som anleggsmidler. Andre eiendeler er klassifisert
+som omløpsmidler. Fordringer som skal tilbakebetales innen et år er uansett klassifisert som omløpsmidler.
+Ved klassifisering av kortsiktig og langsiktig gjeld er analoge kriterier lagt til grunn.
+Omløpsmidler vurderes til laveste av anskaffelseskost og virkelig verdi. Kortsiktig gjeld balanseføres til
+nominelt mottatt beløp på etableringstidspunktet.
+Enkelte poster er vurdert etter andre regler. Postene det gjelder vil være blant de postene som omhandles
+nedenfor.
+Aksjer og andeler i tilknyttet selskap og datterselskap
+Investeringer i tilknyttet selskap er vurdert etter egenkapitalmetoden. Tilsvarende gjelder for datterselskap i
+selskapsregnskapet.
+Fordringer
+Kundefordringer og andre fordringer oppføres til pålydende etter fradrag for avsetning til forventet tap.
+Avsetning til tap gjøres på grunnlag av en individuell vurdering av de enkelte fordringene. I tillegg gjøres
+det for øvrige kundefordringer en uspesifisert avsetning for å dekke antatt tap.
+Skatt
+Skattekostnaden i resultatregnskapet omfatter både periodens betalbare skatt og endring i utsatt skatt. Utsatt
+skatt er beregnet med 22% på grunnlag av de midlertidige forskjeller som eksisterer mellom
+regnskapsmessige og skattemessige verdier, samt ligningsmessig underskudd til fremføring ved utgangen av
+regnskapsåret . Skatteøkende og skattereduserende midlertidige forskjeller som reverserer eller kan reversere
+i samme periode er utlignet og nettoført. Utsatt skatt på merverdier i forbindelse med oppkjøp av
+datterselskap blir ikke utlignet.
+Org.nr 810 431 172
+
+Note 2 Virksomhetens art og lokalisering
+As Scan-wood er et selskap som driver med Graving, transport, utleie av personell og maskiner,
+montasje og vedlikehold, kjøp og salg av maskiner og utstyr. Selskapet er lokalisert i Eidskog
+kommune.
+Note 3 Varer
+Varelager 2025 2024
+Lager av innkjøpte handelsvarer 35 000 35 000
+Sum varelager 35 000 35 000
+Varekostnad 2025 2024
+Sum varekostnad 0 0
+Note 4 Lønnskostnader
+As Scan-wood har ikke hatt lønns- eller personalkostnader i 2025 og det foreligger heller ingen
+slike forpliktelser.
+Selskapet er skyldig daglig leder Tor Lindkjølen kr 1 562 582.
+Note 5 Anleggsmidler
+Bygninger Transport- Maskiner og Sum
+og tomter midler anlegg
+Anskaffelseskost pr. 01.01.25 136 543 0 136 543
++ Tilgang kjøpte driftsmidler 431 100 431 100
+- Avgang i året 431 100 431 100
+= Anskaffelseskost 31.12.25 136 543 0 136 543
+Akkumulerte avskrivninger 31.12.25 0 0
+= Bokført verdi 31.12.25 136 543 0 136 543
+Økonomisk levetid 0-5 år 5 år
+Org.nr 810 431 172
+
+Note 6 Skatt
+Årets skattekostnad 2025 2024
+Resultatført skatt på ordinært resultat:
+Betalbar skatt 0 0
+Endring i utsatt skattefordel 0 0
+Skattekostnad ordinært resultat 0 0
+Skattepliktig inntekt:
+Resultat før skatt 36 364 -89 314
+Permanente forskjeller 0 0
+Endring i midlertidige forskjeller -131 932 35 305
+Skattepliktig inntekt -95 569 -54 009
+Betalbar skatt i balansen:
+Betalbar skatt på årets resultat 0 0
+Sum betalbar skatt i balansen 0 0
+Skatteeffekten av midlertidige forskjeller og underskudd til fremføring som har gitt opphav til utsatt
+skatt og utsatte skattefordeler, spesifisert på typer av midlertidige forskjeller
+2025 2024 Endring
+Varige driftsmidler 275 399 143 466 -131 932
+Fordringer -1 200 000 0 1 200 000
+Pensjonspremie/- forpliktelse 1 200 000 0 -1 200 000
+Sum 275 399 143 466 -131 932
+Akkumulert fremførbart underskudd -522 591 -427 022 95 569
+Inngår ikke i beregningen av utsatt skatt 247 192 283 556 36 364
+Utsatt skattefordel (22 %) 0 0 0
+I henhold til God regnskapsskikk for små foretak balanseføres ikke utsatt skattefordel.
+Note 7 Egenkapital
+Aksjekapital Overkurs Annen Annen Sum
+Innskutt egenkapital egenkapital
+egenkapital
+Pr. 31.12.2024 210 000 0 0 706 599 916 599
+Årets resultat 36 364 36 364
+Pr 31.12.2025 210 000 0 0 742 962 952 962
+Org.nr 810 431 172
+
+Note 8 Aksjonærer
+Aksjekapitalen i As Scan-wood pr. 31.12 består av:
+Antall Pålydende Bokført
+
+Ordinære aksjer 30 7 000,00 210 000
+Sum 30 210 000
+Eierstruktur
+Aksjonærer 1 % pr. 31.12:
+
+Ordinære Eierandel Stemmeandel
+Tor Lindkjølen 30 100,0 100,0
+Totalt antall aksjer 30 100,0 100,0
+Aksjer og opsjoner eiet av medlemmer i styret og daglig leder:
+Navn Verv Ordinære
+Tor Lindkjølen styreleder/daglig leder 30
+Note 9 Fortsatt drift
+Resultatet for 2025 viser et overskudd på kr. 36 364 etter skatt, mot kr. -89 314 i 2024. Soliditeten
+og likviditeten er fortsatt god og det er ikke noe som indikerer at driften ikke kan fortsette, selskapet
+har gjeld til akjsonær, og ikke kreditorer. Styret vurderer at forutsetningene for fortsatt drift er til
+stede og legger det til grunn for sin virksomhet.
+
+Org.nr 810 431 172

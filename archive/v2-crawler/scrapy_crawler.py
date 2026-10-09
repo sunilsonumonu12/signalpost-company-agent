@@ -10,8 +10,8 @@ import scrapy
 from bs4 import BeautifulSoup
 from scrapy.exceptions import IgnoreRequest
 
-from .crawl_events import error_page_event, extract_page_event
-from .website import USER_AGENT, _priority_links, assert_public_url, normalize_homepage
+from norway_company_agent.crawl_events import emit_crawl_event, error_page_event, extract_page_event
+from norway_company_agent.website import USER_AGENT, _priority_links, assert_public_url, normalize_homepage
 
 
 class PublicNetworkMiddleware:
@@ -88,8 +88,8 @@ class SignalpostWebsiteSpider(scrapy.Spider):
         "COOKIES_ENABLED": False,
         "TELNETCONSOLE_ENABLED": False,
         "DOWNLOADER_MIDDLEWARES": {
-            "norway_company_agent.scrapy_crawler.PublicNetworkMiddleware": 50,
-            "norway_company_agent.scrapy_crawler.OperationalTelemetryMiddleware": 850,
+            "scrapy_crawler.PublicNetworkMiddleware": 50,
+            "scrapy_crawler.OperationalTelemetryMiddleware": 850,
         },
     }
 
@@ -134,11 +134,29 @@ class SignalpostWebsiteSpider(scrapy.Spider):
     def parse_homepage(self, response):
         self._record_company_completion(response.request)
         event = self._event(response)
-        yield event
         if event.get("status") != "available":
+            yield event
             return
         soup = BeautifulSoup(response.body.decode(response.encoding or "utf-8", errors="replace"), "lxml")
-        for url in _priority_links(response.url, soup):
+        selected_links = _priority_links(response.url, soup)
+        all_priority_links = _priority_links(response.url, soup, limit=1000)
+        selected_set = set(selected_links)
+        forensics = event.get("forensics") or {}
+        forensics["priority_links_selected"] = [{"url": url, "page_kind": kind} for url, kind in selected_links]
+        forensics["priority_links_not_selected"] = [
+            {"url": url, "page_kind": kind, "reason": "outside bounded priority-page crawl limit"}
+            for url, kind in all_priority_links if (url, kind) not in selected_set
+        ]
+        event["forensics"] = forensics
+        emit_crawl_event(
+            "links_discovered",
+            organisation_number=response.meta["organisation_number"],
+            url=response.url,
+            count=len(all_priority_links),
+            selected_count=len(selected_links),
+        )
+        yield event
+        for url, page_kind in selected_links:
             yield scrapy.Request(
                 url,
                 callback=self.parse_secondary,
@@ -146,7 +164,7 @@ class SignalpostWebsiteSpider(scrapy.Spider):
                 meta={
                     "organisation_number": response.meta["organisation_number"],
                     "requested_url": url,
-                    "page_kind": "priority",
+                    "page_kind": page_kind,
                     "scheme_supplied": True,
                 },
             )
@@ -155,7 +173,7 @@ class SignalpostWebsiteSpider(scrapy.Spider):
         yield self._event(response)
 
     def _event(self, response):
-        return extract_page_event(
+        event = extract_page_event(
             organisation_number=response.meta["organisation_number"],
             requested_url=response.meta["requested_url"],
             final_url=response.url,
@@ -164,6 +182,9 @@ class SignalpostWebsiteSpider(scrapy.Spider):
             body=bytes(response.body),
             page_kind=response.meta["page_kind"],
         )
+        started = response.request.meta.get("_signalpost_started_at")
+        event["duration_seconds"] = max(0.0, time.monotonic() - started) if started is not None else "not_available"
+        return event
 
     def errback_page(self, failure):
         request = failure.request

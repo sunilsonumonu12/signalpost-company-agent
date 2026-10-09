@@ -12,8 +12,12 @@ import urllib.request
 from collections import Counter
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
+
+from norway_company_agent.env import load_local_env  # noqa: E402
+
+load_local_env(ROOT)
 
 from norway_company_agent.discovery import build_company_search_query, choose_search_candidate, parse_exa_web_results  # noqa: E402
 from norway_company_agent.evidence import evidence, utc_now  # noqa: E402

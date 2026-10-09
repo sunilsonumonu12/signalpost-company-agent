@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import re
+import shutil
 import subprocess
 import tempfile
 import urllib.request
@@ -17,7 +18,8 @@ from pypdf import PdfReader
 
 
 UA = "SignalpostResearchPOC/1.0 (+https://builderr.ai)"
-OCR_NUMBER = r"(?-i:\b[0-9O][0-9O .,-]{0,8})"
+# Keep whitespace inside valid three-digit groups only; adjacent year values stay separate.
+OCR_NUMBER = r"(?-i:\b[0-9O](?:(?:[ .][0-9O]{3})+|[.,][0-9O]{1,2})?)"
 # Bokmål "regnskapsåret" / Nynorsk "rekneskapsåret" -- the correct spelling always
 # has "å", which is what correctly-OCR'd text (Norwegian language pack) actually
 # produces. Earlier versions of these patterns only allowed the ASCII "aret" form,
@@ -137,10 +139,20 @@ def ocr_pdf(pdf_path: Path, *, pages: int, dpi: int) -> str:
         return "\n".join(text)
 
 
+def registry_employee_count(profile: dict) -> object:
+    evidence_records = profile.get("evidence") or {}
+    live_value = (evidence_records.get("registry_live") or {}).get("value") or {}
+    registry_value = (evidence_records.get("registry") or {}).get("value") or {}
+    for value in (live_value.get("employees"), live_value.get("antallAnsatte"), registry_value.get("antallAnsatte")):
+        if value is not None and str(value).strip() != "":
+            return value
+    return None
+
+
 def collect(profile: dict, cache_dir: Path, *, ocr_pages: int, ocr_dpi: int) -> tuple[dict | None, dict]:
     org = str(profile["organisation_number"])
-    registry = ((profile.get("evidence") or {}).get("registry") or {}).get("value") or {}
-    if str(registry.get("antallAnsatte") or "").isdigit():
+    registry_count = registry_employee_count(profile)
+    if registry_count is not None and str(registry_count).strip().isdigit():
         return None, {"organisation_number": org, "status": "registry_count_already_available"}
     history = (profile.get("evidence") or {}).get("financial_history") or {}
     pdfs = (history.get("value") or {}).get("pdfs") or []
@@ -166,9 +178,24 @@ def collect(profile: dict, cache_dir: Path, *, ocr_pages: int, ocr_dpi: int) -> 
         for page in reader.pages[:120]:
             pages.append(page.extract_text() or "")
         text = "\n".join(pages)
+        text_extraction_chars = len(text)
+        ocr_required = needs_ocr(text) and ocr_pages > 0
         ocr_used = False
         ocr_cache_path = cache_dir / f"{org}-{latest['year']}-ocr-{ocr_pages}-{ocr_dpi}.txt"
-        if needs_ocr(text) and ocr_pages > 0:
+        if ocr_required:
+            missing_tools = [name for name in ("pdftoppm", "tesseract") if shutil.which(name) is None]
+            if missing_tools:
+                return None, {
+                    "organisation_number": org,
+                    "status": "error",
+                    "error": "OCR required but missing executable(s): " + ", ".join(missing_tools),
+                    "report_year": str(latest["year"]),
+                    "source_url": url,
+                    "pdf_text_characters": text_extraction_chars,
+                    "ocr_required": True,
+                    "ocr_used": False,
+                    "cache_hit": cache_hit,
+                }
             if ocr_cache_path.exists():
                 ocr_text = ocr_cache_path.read_text(encoding="utf-8", errors="replace")
             else:
@@ -178,11 +205,22 @@ def collect(profile: dict, cache_dir: Path, *, ocr_pages: int, ocr_dpi: int) -> 
             # while adding the OCR-only notes used for workforce extraction.
             text = text + "\n" + ocr_text
             ocr_used = True
+        extracted_text_path = cache_dir / f"{org}-{latest['year']}-extracted.txt"
+        extracted_text_path.write_text(text, encoding="utf-8")
+        extraction_details = {
+            "report_year": str(latest["year"]),
+            "source_url": url,
+            "pdf_text_characters": text_extraction_chars,
+            "extracted_text_path": str(extracted_text_path),
+            "ocr_required": ocr_required,
+            "ocr_used": ocr_used,
+            "cache_hit": cache_hit,
+        }
         if org not in re.sub(r"\D", "", text):
-            return None, {"organisation_number": org, "status": "organisation_number_not_in_pdf", "cache_hit": cache_hit, "ocr_used": ocr_used}
+            return None, {"organisation_number": org, "status": "organisation_number_not_in_pdf", **extraction_details}
         count, span, status, measure = extract_candidate(text)
         if count is None:
-            return None, {"organisation_number": org, "status": status, "cache_hit": cache_hit, "pages": len(reader.pages), "ocr_used": ocr_used}
+            return None, {"organisation_number": org, "status": status, "pages": len(reader.pages), **extraction_details}
         digest = hashlib.sha256(raw).hexdigest()
         metrics = {"workforce_value": count, "measure": measure, "year": str(latest["year"]), "scope": "company_phrase"}
         metrics[str(measure)] = count
@@ -207,9 +245,9 @@ def collect(profile: dict, cache_dir: Path, *, ocr_pages: int, ocr_dpi: int) -> 
             "metrics": metrics,
             "strategy": "annual_report_workforce_snapshot",
         }
-        return observation, {"organisation_number": org, "status": "accepted", "workforce_value": count, "measure": measure, "cache_hit": cache_hit, "ocr_used": ocr_used}
+        return observation, {"organisation_number": org, "status": "accepted", "workforce_value": count, "measure": measure, **extraction_details}
     except Exception as exc:
-        return None, {"organisation_number": org, "status": "error", "error": f"{type(exc).__name__}: {str(exc)[:180]}"}
+        return None, {"organisation_number": org, "status": "error", "error": f"{type(exc).__name__}: {str(exc)[:180]}", "report_year": str(latest.get("year") or "") if "latest" in locals() else None, "source_url": url if "url" in locals() else None}
 
 
 def main() -> None:
@@ -230,13 +268,7 @@ def main() -> None:
         for row in (json.loads(line) for line in Path(args.profiles).read_text(encoding="utf-8").splitlines() if line.strip())
         if str(row["organisation_number"]) in set(wanted)
     }
-    eligible = []
-    for org in wanted:
-        profile = profile_map[org]
-        registry = ((profile.get("evidence") or {}).get("registry") or {}).get("value") or {}
-        pdfs = ((((profile.get("evidence") or {}).get("financial_history") or {}).get("value") or {}).get("pdfs") or [])
-        if not str(registry.get("antallAnsatte") or "").isdigit() and pdfs:
-            eligible.append(profile)
+    eligible = [profile_map[org] for org in wanted]
     if args.limit:
         eligible = eligible[: args.limit]
     cache_dir = Path(args.cache)

@@ -1,9 +1,17 @@
 {
-  "run_id": "run-20260928-054142-602382",
-  "started_at": "2026-09-28T05:41:42Z",
-  "completed_at": "2026-09-28T05:58:07Z",
+  "run_id": "run-20261006-045357-514722",
+  "started_at": "2026-10-06T04:53:57Z",
+  "completed_at": "2026-10-06T05:04:54Z",
   "stages_run": [
     "registry_batch",
+    "tavily_discovery",
+    "exa_discovery",
+    "deep_crawl",
+    "site_activity",
+    "site_news",
+    "site_careers",
+    "workforce_ocr",
+    "prior_year_financials",
     "claims_conversion"
   ],
   "profiles": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\profiles.jsonl",

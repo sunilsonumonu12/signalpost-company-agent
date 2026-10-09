@@ -10,12 +10,22 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
+ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = ROOT.parents[1]
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
+sys.path.insert(0, str(ROOT))
 
 from norway_company_agent.crawl_events import merge_profile_events, missing_seed_error_events  # noqa: E402
 from norway_company_agent.identity import apply_website_identity_gate  # noqa: E402
 from norway_company_agent.operations import domain_request_summary, latency_summary, peak_rss_bytes  # noqa: E402
+from norway_company_agent.validation import (  # noqa: E402
+    append_quarantine_record,
+    validate_crawl_page_event,
+    validate_website_value,
+    validation_error_details,
+    validation_reason_code,
+)
+from pydantic import ValidationError  # noqa: E402
 
 
 def read_jsonl(path: Path) -> list[dict]:
@@ -85,9 +95,9 @@ def main() -> None:
     try:
         from scrapy.crawler import CrawlerProcess
         from scrapy.utils.project import get_project_settings
-        from norway_company_agent.scrapy_crawler import SignalpostWebsiteSpider
+        from scrapy_crawler import SignalpostWebsiteSpider
     except ImportError as exc:
-        raise SystemExit("Install the crawler runtime with: uv sync --extra crawler") from exc
+        raise SystemExit(f'Install Scrapy using this interpreter: "{sys.executable}" -m pip install scrapy') from exc
 
     parser = argparse.ArgumentParser(description="Resumable, robots-aware Scrapy scheduler for registry-linked company sites.")
     parser.add_argument("--input", required=True)
@@ -95,6 +105,8 @@ def main() -> None:
     parser.add_argument("--events", required=True)
     parser.add_argument("--jobdir", required=True)
     parser.add_argument("--report", required=True)
+    parser.add_argument("--forensics", required=True)
+    parser.add_argument("--quarantine", type=Path)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--organisation-number", action="append", dest="organisation_numbers")
     parser.add_argument("--concurrency", type=int, default=16)
@@ -152,6 +164,22 @@ def main() -> None:
             for event in missing_seed_events:
                 handle.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n")
         events.extend(missing_seed_events)
+    quarantine_path = args.quarantine or Path(args.report).parent / "validation-quarantine.jsonl"
+    valid_events = []
+    rejected_events = 0
+    for event in events:
+        try:
+            valid_events.append(validate_crawl_page_event(event))
+        except ValidationError as exc:
+            rejected_events += 1
+            append_quarantine_record(
+                path=quarantine_path,
+                record_type="CrawlPageEvent",
+                record=event,
+                reason_code=validation_reason_code(exc),
+                errors=validation_error_details(exc),
+            )
+    events = valid_events
     by_org: dict[str, list[dict]] = defaultdict(list)
     dedupe = set()
     for event in events:
@@ -163,21 +191,162 @@ def main() -> None:
     touched = 0
     website_statuses: Counter[str] = Counter()
     identity_statuses: Counter[str] = Counter()
+    identity_decisions: Counter[str] = Counter()
     published_socials = 0
+    website_values_accepted = 0
+    website_values_rejected = 0
     for row in rows:
         profile_events = by_org.get(row["organisation_number"])
         if not profile_events:
             continue
         website = merge_profile_events(row, profile_events)
+        if website.get("status") == "available":
+            try:
+                website["value"] = validate_website_value(website.get("value"))
+                website_values_accepted += 1
+            except ValidationError as exc:
+                website_values_rejected += 1
+                append_quarantine_record(
+                    path=quarantine_path,
+                    record_type="WebsiteValue",
+                    record=website.get("value"),
+                    reason_code=validation_reason_code(exc),
+                    errors=validation_error_details(exc),
+                )
+                website = {
+                    **website,
+                    "status": "source_error",
+                    "value": None,
+                    "note": "Website payload failed schema validation",
+                }
         gated = apply_website_identity_gate(row, website)
         row.setdefault("evidence", {})["website"] = gated["website"]
         website_statuses[gated["website"].get("status", "invalid")] += 1
         if gated["assessment"]:
             identity_statuses[gated["assessment"].get("status", "invalid")] += 1
+            identity_decisions[gated["assessment"].get("decision", "UNKNOWN")] += 1
         published_socials += len((gated["website"].get("value") or {}).get("social_links") or [])
         touched += 1
     write_jsonl(Path(args.output), rows)
     output_hash = hashlib.sha256(Path(args.output).read_bytes()).hexdigest()
+
+    forensic_pages_by_org: dict[str, list[dict]] = defaultdict(list)
+    for event in events:
+        forensic = event.get("forensics")
+        if isinstance(forensic, dict):
+            forensic_pages_by_org[str(event.get("organisation_number") or "")].append(forensic)
+
+    forensic_rows = []
+    forensic_totals = Counter()
+    rejection_reasons: Counter[str] = Counter()
+    visible_data_without_candidate = []
+    for row in rows:
+        org = str(row.get("organisation_number") or "")
+        website = (row.get("evidence") or {}).get("website") or {}
+        website_value = website.get("value") if isinstance(website.get("value"), dict) else {}
+        jobs = website_value.get("jobs") if isinstance(website_value.get("jobs"), list) else []
+        news = website_value.get("news") if isinstance(website_value.get("news"), list) else []
+        pages = forensic_pages_by_org.get(org, [])
+        for page in pages:
+            job_urls = {str(candidate.get("url") or "") for candidate in page.get("job_candidates") or []}
+            news_urls = {str(candidate.get("url") or "") for candidate in page.get("article_candidates") or []}
+            page_jobs = [item for item in jobs if str(item.get("url") or "") in job_urls]
+            page_news = [item for item in news if str(item.get("url") or "") in news_urls]
+            page["normalized_jobs"] = page_jobs or "not_available"
+            page["normalized_news"] = page_news or "not_available"
+            page["jobs_extracted"] = len(page_jobs)
+            page["news_extracted"] = len(page_news)
+            for rejection in page.get("job_candidate_rejections") or []:
+                rejection_reasons["jobs: " + str(rejection.get("rejection_reason") or "unspecified")] += 1
+            for rejection in page.get("article_candidate_rejections") or []:
+                rejection_reasons["news: " + str(rejection.get("rejection_reason") or "unspecified")] += 1
+
+        careers_pages = [page for page in pages if page.get("careers_page_detected")]
+        news_pages = [page for page in pages if page.get("news_page_detected")]
+        profile_events = by_org.get(org, [])
+        failed_careers_pages = [event for event in profile_events if event.get("page_kind") == "careers" and event.get("status") != "available"]
+        failed_news_pages = [event for event in profile_events if event.get("page_kind") == "news" and event.get("status") != "available"]
+        job_links_found = sum(int(page.get("job_links_found") or 0) for page in pages)
+        job_candidates_found = sum(int(page.get("job_candidates_found") or 0) for page in pages)
+        article_links_found = sum(int(page.get("article_links_found") or 0) for page in pages)
+        article_candidates_found = sum(int(page.get("article_candidates_found") or 0) for page in pages)
+        unselected_careers_links = [
+            link for page in pages for link in page.get("priority_links_not_selected", [])
+            if link.get("page_kind") == "careers"
+        ]
+        if not careers_pages and not failed_careers_pages:
+            jobs_loss_stage = (
+                "page discovery: careers link was found but omitted by the bounded priority-page crawl"
+                if unselected_careers_links else
+                "candidate detection: job-like links or text were visible but no existing parser candidate was accepted"
+                if job_links_found or any(page.get("job_like_text_candidates") for page in pages) else
+                "page discovery: no careers page or job-like link was found on crawled pages"
+            )
+        elif failed_careers_pages:
+            jobs_loss_stage = "page crawl: a selected careers page failed to fetch"
+        elif job_candidates_found and not jobs:
+            jobs_loss_stage = "normalization: parser candidates existed but normalized jobs are absent"
+        elif job_links_found and not job_candidates_found:
+            jobs_loss_stage = "candidate detection: job-like links were visible but parser candidates were absent"
+        elif any(not page.get("full_cleaned_page_text") and (page.get("relevant_jsonld") or page.get("relevant_html_fragments")) for page in careers_pages):
+            jobs_loss_stage = "HTML extraction: structured or relevant markup exists but cleaned text is empty"
+        else:
+            jobs_loss_stage = "none observed: parser candidates propagated to normalized jobs" if jobs else "page discovery: no job data was observed"
+
+        if failed_news_pages:
+            news_loss_stage = "page crawl: a selected news page failed to fetch"
+        elif article_candidates_found and not news:
+            news_loss_stage = "normalization: article candidates existed but normalized news are absent"
+        elif article_links_found and not article_candidates_found:
+            news_loss_stage = "candidate detection: article-like links were visible but no dated article candidate was accepted"
+        elif any(not page.get("full_cleaned_page_text") and (page.get("relevant_jsonld") or page.get("relevant_html_fragments")) for page in news_pages):
+            news_loss_stage = "HTML extraction: structured or relevant markup exists but cleaned text is empty"
+        elif news:
+            news_loss_stage = "none observed: article candidates propagated to normalized news"
+        else:
+            news_loss_stage = "page discovery: no news page or article-like link was found on crawled pages"
+
+        for page in pages:
+            if page.get("job_like_links") and not page.get("job_candidates"):
+                visible_data_without_candidate.append({"organisation_number": org, "url": page.get("final_url"), "signal": "jobs", "stage": jobs_loss_stage})
+            if page.get("article_like_links") and not page.get("article_candidates"):
+                visible_data_without_candidate.append({"organisation_number": org, "url": page.get("final_url"), "signal": "news", "stage": news_loss_stage})
+        forensic_totals["companies_with_careers_pages"] += bool(careers_pages)
+        forensic_totals["companies_with_job_links"] += job_links_found > 0
+        forensic_totals["total_job_links"] += job_links_found
+        forensic_totals["total_job_candidates"] += job_candidates_found
+        forensic_totals["total_normalized_jobs"] += len(jobs)
+        forensic_totals["companies_with_news_pages"] += bool(news_pages)
+        forensic_totals["total_article_links"] += article_links_found
+        forensic_totals["total_article_candidates"] += article_candidates_found
+        forensic_totals["total_normalized_news"] += len(news)
+        forensic_rows.append({
+            "organisation_number": org,
+            "careers_page": "available" if careers_pages else "not_available",
+            "jobs_data_loss_stage": jobs_loss_stage,
+            "job_links_found": job_links_found,
+            "job_candidates_found": job_candidates_found,
+            "jobs_extracted": len(jobs),
+            "normalized_jobs": jobs or "not_available",
+            "news_page": "available" if news_pages else "not_available",
+            "news_data_loss_stage": news_loss_stage,
+            "article_links_found": article_links_found,
+            "article_candidates_found": article_candidates_found,
+            "news_extracted": len(news),
+            "normalized_news": news or "not_available",
+            "pages": pages,
+        })
+    forensics_path = Path(args.forensics)
+    forensics_path.parent.mkdir(parents=True, exist_ok=True)
+    write_jsonl(forensics_path, forensic_rows)
+    forensic_report_path = forensics_path.with_name("website-forensic-summary.json")
+    forensic_report_path.write_text(json.dumps({
+        "companies": len(forensic_rows),
+        **dict(forensic_totals),
+        "candidate_rejection_reasons": dict(sorted(rejection_reasons.items())),
+        "pages_with_visible_data_but_no_candidate": visible_data_without_candidate,
+        "forensics_path": str(forensics_path),
+    }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     request_latencies = getattr(crawler, "signalpost_request_latency_ms", [])
     response_download_latencies = getattr(crawler, "signalpost_response_download_latency_ms", [])
@@ -205,7 +374,16 @@ def main() -> None:
         "synthetic_terminal_events": len(missing_seed_events),
         "website_statuses": dict(website_statuses),
         "identity_statuses": dict(identity_statuses),
+        "identity_decisions": dict(identity_decisions),
         "page_outcome_counts": page_outcome_counts,
+        "validation": {
+            "crawl_page_events_accepted": len(events),
+            "crawl_page_events_rejected": rejected_events,
+            "website_values_accepted": website_values_accepted,
+            "website_values_rejected": website_values_rejected,
+            "quarantined_records": rejected_events + website_values_rejected,
+            "quarantine_path": str(quarantine_path),
+        },
         "published_social_profiles": published_socials,
         "elapsed_seconds": round(elapsed, 3),
         "run_started_at": run_started_at,
@@ -235,6 +413,9 @@ def main() -> None:
         "per_domain": args.per_domain,
         "jobdir": str(jobdir),
         "events_path": str(events_path),
+        "forensics_path": str(forensics_path),
+        "forensic_summary_path": str(forensic_report_path),
+        "forensic_totals": dict(forensic_totals),
     }
     report_path = Path(args.report)
     report_path.parent.mkdir(parents=True, exist_ok=True)

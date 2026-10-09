@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -16,6 +18,28 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_INPUT = PROJECT_ROOT / "entry-companies.jsonl"
 WORK_DIR = PROJECT_ROOT / "out" / "latest-run"
 RESULT_FILE = PROJECT_ROOT / "result" / "envelopes.jsonl"
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
+from norway_company_agent.env import load_local_env  # noqa: E402
+
+
+def configure_tesseract_path() -> str | None:
+    executable = shutil.which("tesseract")
+    if executable:
+        return executable
+    tesseract_dir = Path(os.environ.get("TESSERACT_DIR", r"C:\Program Files\Tesseract-OCR"))
+    candidate = tesseract_dir / "tesseract.exe"
+    if candidate.is_file():
+        os.environ["PATH"] = str(tesseract_dir) + os.pathsep + os.environ.get("PATH", "")
+        return str(candidate)
+    return None
+
+
+def clear_public_outputs(directory: Path = PROJECT_ROOT / "out") -> None:
+    if not directory.exists():
+        return
+    for path in directory.iterdir():
+        if path.is_file() and len(path.stem) == 9 and path.stem.isdigit() and path.suffix == ".jsonl":
+            path.unlink()
 
 
 def count_organisations(path: Path) -> int:
@@ -129,15 +153,25 @@ def print_final_summary(*, success: bool, expected_count: int, state: dict, elap
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run SignalPost and keep one clean result file.")
+    parser = argparse.ArgumentParser(description="Run SignalPost and write one envelope JSONL for all organisations.")
     parser.add_argument("--organisations", type=Path, default=DEFAULT_INPUT)
     parser.add_argument("--progress-interval", type=float, default=30.0, help="Seconds between live progress reports")
     parser.add_argument(
         "--source-envelopes",
         type=Path,
-        help="Convert an existing populated envelope JSONL through the result contract without rerunning collection.",
+        help="Convert an existing populated envelope JSONL without rerunning collection.",
     )
+    parser.add_argument("--include-workforce-ocr", dest="skip_workforce_ocr", action="store_false", default=True,
+                        help="Run annual-report OCR workforce extraction.")
+    parser.add_argument("--skip-workforce-ocr", dest="skip_workforce_ocr", action="store_true",
+                        help="Skip annual-report OCR workforce extraction (default).")
+    parser.add_argument("--include-deep-crawl", dest="skip_deep_crawl", action="store_false", default=False,
+                        help="Enable the optional multi-page website crawl (default).")
+    parser.add_argument("--skip-deep-crawl", dest="skip_deep_crawl", action="store_true",
+                        help="Skip the optional multi-page website crawl.")
     args = parser.parse_args()
+    load_local_env(PROJECT_ROOT)
+    configure_tesseract_path()
 
     if args.source_envelopes:
         source = args.source_envelopes
@@ -145,10 +179,8 @@ def main() -> int:
             source = PROJECT_ROOT / source
         if not source.exists():
             parser.error(f"Source envelope file not found: {source}")
+        clear_public_outputs()
         RESULT_FILE.parent.mkdir(parents=True, exist_ok=True)
-        if RESULT_FILE.exists():
-            RESULT_FILE.unlink()
-        run_id = "result-" + datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
         command = [
             sys.executable,
             str(PROJECT_ROOT / "scripts" / "build_output_contract.py"),
@@ -156,15 +188,18 @@ def main() -> int:
             str(source),
             "--output",
             str(RESULT_FILE),
-            "--run-id",
-            run_id,
+            "--report",
+            str(WORK_DIR / "source-contract-report.json"),
         ]
         completed = subprocess.run(command, cwd=PROJECT_ROOT, capture_output=True, text=True)
         if completed.returncode != 0:
             if completed.stderr:
                 print(completed.stderr, file=sys.stderr, end="")
             return completed.returncode
-        return 0
+        produced = sum(1 for line in RESULT_FILE.read_text(encoding="utf-8").splitlines() if line.strip())
+        expected = sum(1 for line in source.read_text(encoding="utf-8").splitlines() if line.strip())
+        print(f"Converted {produced}/{expected} envelopes to {RESULT_FILE}.")
+        return 0 if produced == expected else 1
 
     organisations = args.organisations
     if not organisations.is_absolute():
@@ -181,6 +216,7 @@ def main() -> int:
     run_id = "run-" + datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
     if WORK_DIR.exists():
         shutil.rmtree(WORK_DIR)
+    clear_public_outputs()
     RESULT_FILE.parent.mkdir(parents=True, exist_ok=True)
     if RESULT_FILE.exists():
         RESULT_FILE.unlink()
@@ -197,6 +233,10 @@ def main() -> int:
         "--expected-count",
         str(expected_count),
     ]
+    if not args.skip_workforce_ocr:
+        command.append("--include-workforce-ocr")
+    if not args.skip_deep_crawl:
+        command.append("--include-deep-crawl")
 
     return_code, progress, elapsed = run_with_progress(
         command,
@@ -211,8 +251,7 @@ def main() -> int:
             produced_envelope_count = sum(1 for line in source.read_text(encoding="utf-8").splitlines() if line.strip())
         except OSError:
             produced_envelope_count = 0
-    batch_completed = envelopes_produced and produced_envelope_count >= expected_count
-    if return_code != 0 and batch_completed:
+    if return_code != 0 and envelopes_produced and produced_envelope_count >= expected_count:
         print(
             f"[{datetime.now().strftime('%H:%M:%S')}] NOTICE | subprocess exited with code {return_code} "
             f"but {produced_envelope_count}/{expected_count} envelopes were produced; treating as completed-with-failures.",
@@ -221,28 +260,24 @@ def main() -> int:
         return_code = 0
     if return_code != 0:
         print_final_summary(success=False, expected_count=expected_count, state=progress, elapsed=elapsed, return_code=return_code)
-        if envelopes_produced:
+        if source.exists():
+            produced_envelope_count = sum(1 for line in source.read_text(encoding="utf-8").splitlines() if line.strip())
             print(
                 f"Run reported failure but {produced_envelope_count} envelopes exist at {source}. "
                 f"Intermediate files kept in {WORK_DIR}",
                 file=sys.stderr,
             )
-            if produced_envelope_count >= 1:
-                RESULT_FILE.parent.mkdir(parents=True, exist_ok=True)
-                if RESULT_FILE.exists():
-                    RESULT_FILE.unlink()
+            if produced_envelope_count:
                 shutil.copy2(source, RESULT_FILE)
+                print(f"Partial envelope output preserved at {RESULT_FILE}", file=sys.stderr)
         else:
             print(f"Run failed. Intermediate files were kept in {WORK_DIR}", file=sys.stderr)
         return return_code
 
     if not envelopes_produced:
-        print(f"Run finished but result was not created: {source}", file=sys.stderr)
+        print(f"Run finished but envelope file was not created: {source}", file=sys.stderr)
         return 1
-    produced_envelope_count = sum(1 for line in source.read_text(encoding="utf-8").splitlines() if line.strip())
     RESULT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    if RESULT_FILE.exists():
-        RESULT_FILE.unlink()
     shutil.copy2(source, RESULT_FILE)
     print_final_summary(success=True, expected_count=expected_count, state=progress, elapsed=elapsed, return_code=0)
     if produced_envelope_count != expected_count:
@@ -251,6 +286,7 @@ def main() -> int:
             f"({produced_envelope_count} vs expected {expected_count}); copied to result anyway.",
             file=sys.stderr,
         )
+    print(f"Final output: {RESULT_FILE}")
     return 0
 
 

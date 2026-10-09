@@ -34,7 +34,11 @@ Or manually specify your input file:
 python run.py --organisations 1000-companies.jsonl
 ```
 
----
+To include annual-report workforce OCR:
+
+```bash
+python run.py --organisations entry-companies.jsonl --include-workforce-ocr
+```
 
 ## 📋 Requirements
 
@@ -50,7 +54,7 @@ python run.py --organisations 1000-companies.jsonl
 
 | File/Folder | Description |
 |---|---|
-| `result/envelopes.jsonl` | ✅ **FINAL OUTPUT** - The most important file |
+| `result/envelopes.jsonl` | ✅ **FINAL OUTPUT** - One envelope object per company, one JSON object per line |
 | `out/latest-run/` | All intermediate files and reports from the run |
 | `out/latest-run/run-summary.json` | Run summary, including successes and failures |
 | `out/latest-run/progress.json` | Progress tracking information |
@@ -131,11 +135,13 @@ The agent processes each company through several stages:
    Extracts information such as news, events, careers, and financial data.
 
 4. **Contract**  
-   Validates and saves the final output to:
+   Converts the collected company profiles into one envelope JSONL:
 
 ```text
 result/envelopes.jsonl
 ```
+
+The detailed intermediate files and reports remain under `out/latest-run/`.
 
 ### Progress Monitoring
 
@@ -196,3 +202,19 @@ python run.py --organisations "C:\path\to\file.jsonl"
 This is expected. Processing 1,000 companies can take approximately **15–30 minutes**, depending on internet speed and external website response times.
 
 Each company can require multiple HTTP requests to collect and verify the required data.
+
+  "810034882",
+  "810059672",
+  "810094532",
+  "810098252",
+  "810105372",
+  "810130822",
+  "810182482",
+  "810202572",
+  "810274042",
+  "810324562",
+  "810359862",
+  "810363142",
+  "810392312",
+  "810393572",
+  "810412402",

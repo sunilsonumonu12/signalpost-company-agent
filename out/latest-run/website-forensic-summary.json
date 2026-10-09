@@ -1,0 +1,49 @@
+{
+  "companies": 3,
+  "companies_with_careers_pages": 0,
+  "companies_with_job_links": 0,
+  "total_job_links": 0,
+  "total_job_candidates": 0,
+  "total_normalized_jobs": 0,
+  "companies_with_news_pages": 1,
+  "total_article_links": 169,
+  "total_article_candidates": 28,
+  "total_normalized_news": 20,
+  "candidate_rejection_reasons": {
+    "news: news-like page/link was visible, but parser found no accepted article with a valid date and title": 40,
+    "news: no accepted dated article candidate matched this link; parser requires recognized article structure and a valid publication date": 24
+  },
+  "pages_with_visible_data_but_no_candidate": [
+    {
+      "organisation_number": "810412402",
+      "url": "https://www.storebrand.com/sam/international/asset-management/contact-us",
+      "signal": "news",
+      "stage": "candidate detection: article-like links were visible but no dated article candidate was accepted"
+    },
+    {
+      "organisation_number": "810412402",
+      "url": "https://www.storebrand.com/sam/no/asset-management/offerings/real-estate/sustainability/sustainability-award",
+      "signal": "news",
+      "stage": "candidate detection: article-like links were visible but no dated article candidate was accepted"
+    },
+    {
+      "organisation_number": "810438452",
+      "url": "https://beckmann-norway.com/en/policies/contact-information",
+      "signal": "news",
+      "stage": "none observed: article candidates propagated to normalized news"
+    },
+    {
+      "organisation_number": "810438452",
+      "url": "https://beckmann-norway.com/en/pages/contact",
+      "signal": "news",
+      "stage": "none observed: article candidates propagated to normalized news"
+    },
+    {
+      "organisation_number": "810438452",
+      "url": "https://beckmann-norway.com/en/pages/about",
+      "signal": "news",
+      "stage": "none observed: article candidates propagated to normalized news"
+    }
+  ],
+  "forensics_path": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\website-forensics.jsonl"
+}

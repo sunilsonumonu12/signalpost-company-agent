@@ -40,7 +40,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = ROOT.parent
+ARCHIVE_ROOT = PROJECT_ROOT / "archive" / "v2-crawler"
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
+from norway_company_agent.env import load_local_env  # noqa: E402
 from norway_company_agent.telemetry import aggregate_company_metrics, apply_discovery_report, build_metrics, read_events  # noqa: E402
 
 
@@ -102,13 +104,14 @@ def main() -> None:
     parser.add_argument("--expected-count", type=int, required=True)
     parser.add_argument("--overwrite", action="store_true", help="Replace existing output for this run ID")
     parser.add_argument("--discovery-limit", type=int, default=None, help="Cap discovery queries; default is expected-count")
-    parser.add_argument("--skip-deep-crawl", dest="skip_deep_crawl", action="store_true", default=True, help="Skip the scrapy multi-page crawl stage (default for V1 submission)")
-    parser.add_argument("--include-deep-crawl", dest="skip_deep_crawl", action="store_false", help="Enable the crawler for V2 work")
+    parser.add_argument("--skip-deep-crawl", dest="skip_deep_crawl", action="store_true", default=False, help="Skip the scrapy multi-page crawl stage")
+    parser.add_argument("--include-deep-crawl", dest="skip_deep_crawl", action="store_false", help="Enable the crawler (default)")
     parser.add_argument("--skip-workforce-ocr", dest="skip_workforce_ocr", action="store_true", default=True, help="Skip the annual-report OCR workforce stage (default for V1 submission)")
     parser.add_argument("--include-workforce-ocr", dest="skip_workforce_ocr", action="store_false", help="Enable annual-report OCR for V2 work")
     parser.add_argument("--python", default=sys.executable)
     args = parser.parse_args()
 
+    load_local_env(PROJECT_ROOT)
     output_dir = Path(args.output_dir)
     request_log = output_dir / "request-log.jsonl"
     existing_output = output_dir.exists() and any(output_dir.iterdir())
@@ -185,7 +188,7 @@ def main() -> None:
         discovered_path = output_dir / f"profiles-with-{name}.jsonl"
         discovery_report_path = output_dir / f"{name}-discovery-report.json"
         ok = run_stage("discovery", [
-            args.python, str(ROOT / script),
+            args.python, str(ARCHIVE_ROOT / script),
             "--input", str(profiles_path),
             "--output", str(discovered_path),
             "--report", str(discovery_report_path),
@@ -229,12 +232,13 @@ def main() -> None:
         write_jsonl(crawl_input, [row for row in profiles if row.get("website")])
         crawled_path = output_dir / "profiles-crawled.jsonl"
         ok = run_stage("crawling", [
-            args.python, str(ROOT / "run_scrapy_websites.py"),
+            args.python, str(ARCHIVE_ROOT / "run_scrapy_websites.py"),
             "--input", str(crawl_input),
             "--output", str(crawled_path),
             "--events", str(output_dir / "crawl-events.jsonl"),
             "--jobdir", str(output_dir / "crawl-jobdir"),
             "--report", str(output_dir / "crawl-report.json"),
+            "--forensics", str(output_dir / "website-forensics.jsonl"),
         ], optional=True)
         if ok:
             crawled = read_jsonl(crawled_path)
@@ -244,15 +248,17 @@ def main() -> None:
 
             # 4. Activity/news extraction from the deepened crawl. Pure Python,
             # always attempted once there's a crawl to extract from.
-            run_stage("claims/evidence", [args.python, str(ROOT / "extract_company_site_activity.py"), "--profiles", str(profiles_path), "--output", str(activity_obs_path), "--report", str(output_dir / "activity-report.json")], optional=True)
-            run_stage("claims/evidence", [args.python, str(ROOT / "extract_company_site_news.py"), "--profiles", str(profiles_path), "--output", str(news_obs_path), "--report", str(output_dir / "news-report.json")], optional=True)
-            run_stage("claims/evidence", [args.python, str(ROOT / "extract_company_site_careers.py"), "--profiles", str(profiles_path), "--output", str(careers_obs_path), "--report", str(output_dir / "careers-report.json")], optional=True)
+            run_stage("claims/evidence", [args.python, str(ARCHIVE_ROOT / "extract_company_site_activity.py"), "--profiles", str(profiles_path), "--output", str(activity_obs_path), "--report", str(output_dir / "activity-report.json")], optional=True)
+            run_stage("claims/evidence", [args.python, str(ARCHIVE_ROOT / "extract_company_site_news.py"), "--profiles", str(profiles_path), "--output", str(news_obs_path), "--report", str(output_dir / "news-report.json")], optional=True)
+            run_stage("claims/evidence", [args.python, str(ARCHIVE_ROOT / "extract_company_site_careers.py"), "--profiles", str(profiles_path), "--output", str(careers_obs_path), "--report", str(output_dir / "careers-report.json")], optional=True)
             if activity_obs_path.exists():
                 stages_run.append("site_activity")
             if news_obs_path.exists():
                 stages_run.append("site_news")
             if careers_obs_path.exists():
                 stages_run.append("site_careers")
+    elif args.skip_deep_crawl:
+        print("Deep website crawl skipped (--skip-deep-crawl).", file=sys.stderr)
     else:
         print("scrapy not installed -- skipping deep crawl and activity/news extraction.", file=sys.stderr)
 
@@ -263,7 +269,7 @@ def main() -> None:
         orgs_path = output_dir / "all-orgs.txt"
         orgs_path.write_text("\n".join(row["organisation_number"] for row in profiles), encoding="utf-8")
         ok = run([
-            args.python, str(ROOT / "run_annual_report_workforce_connector.py"),
+            args.python, str(ARCHIVE_ROOT / "run_annual_report_workforce_connector.py"),
             "--profiles", str(profiles_path),
             "--organisations", str(orgs_path),
             "--output", str(workforce_obs_path),
@@ -280,7 +286,7 @@ def main() -> None:
     workforce_cache_dir = output_dir / "workforce-cache"
     if not args.skip_workforce_ocr and workforce_cache_dir.exists():
         ok = run([
-            args.python, str(ROOT / "extract_prior_year_financials.py"),
+            args.python, str(ARCHIVE_ROOT / "extract_prior_year_financials.py"),
             "--profiles", str(profiles_path),
             "--cache", str(workforce_cache_dir),
             "--output", str(prior_year_obs_path),
@@ -297,6 +303,7 @@ def main() -> None:
         args.python, str(ROOT / "build_output_contract.py"),
         "--profiles", str(profiles_path),
         "--output", str(envelopes_path),
+        "--report", str(output_dir / "contract-report.json"),
         "--run-id", args.run_id,
         "--started-at", started_at,
         "--completed-at", completed_at,

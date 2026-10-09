@@ -14,10 +14,12 @@ from typing import Any
 
 from bs4 import BeautifulSoup
 import extruct
+from pydantic import ValidationError
 import tldextract
 import trafilatura
 
 from .evidence import evidence
+from .page_signals import extract_page_signals
 from .telemetry import record_request
 
 USER_AGENT = "builderr-signalpost-poc/0.1 (+https://builderr.ai)"
@@ -34,9 +36,26 @@ SOCIAL_HOSTS = {
 PRIORITY_TERMS = (
     "om-oss", "om_oss", "about", "kontakt", "contact", "ledelse", "management",
     "team", "people", "locations", "lokasjoner", "avdelinger", "butikker",
-    "news", "press", "aktuelt", "nyheter",
-    "careers", "career", "jobs", "job", "karriere", "ledige-stillinger", "stillinger",
+    "newsroom", "news", "press", "presse", "pressemelding", "media", "release", "announcement",
+    "artikler", "articles", "blogg", "blog", "aktuelt", "nyheter", "siste-nytt",
+    "careers", "career", "recruitment", "recruiting", "vacancies", "vacancy", "positions",
+    "work-with-us", "jobs", "job", "karriere", "ledige-stillinger", "stillinger",
 )
+PAGE_KIND_BY_TERM = {
+    "om-oss": "about", "om_oss": "about", "about": "about",
+    "kontakt": "contact", "contact": "contact",
+    "ledelse": "management", "management": "management",
+    "team": "team", "people": "team",
+    "locations": "locations", "lokasjoner": "locations", "avdelinger": "locations", "butikker": "locations",
+    "newsroom": "news", "news": "news", "press": "news", "presse": "news",
+    "pressemelding": "news", "media": "news", "release": "news", "announcement": "news",
+    "artikler": "news", "articles": "news", "blogg": "news", "blog": "news",
+    "aktuelt": "news", "nyheter": "news", "siste-nytt": "news",
+    "careers": "careers", "career": "careers", "jobs": "careers", "job": "careers",
+    "recruitment": "careers", "recruiting": "careers", "vacancies": "careers", "vacancy": "careers",
+    "positions": "careers", "work-with-us": "careers", "karriere": "careers",
+    "ledige-stillinger": "careers", "stillinger": "careers",
+}
 
 
 def assert_public_url(url: str) -> None:
@@ -75,6 +94,135 @@ def normalize_homepage(value: str | None) -> str | None:
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         return None
     return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, parsed.path or "/", "", "", ""))
+
+
+def _extract_contact_signals(html: str, final_url: str) -> dict[str, Any]:
+    soup = BeautifulSoup(html, "lxml")
+    signals = extract_page_signals(html, final_url)
+    jobs = []
+    for item in signals.get("jobs") or []:
+        jobs.append({
+            "title": str(item.get("title") or "").strip() or "not_available",
+            "url": str(item.get("url") or final_url).strip(),
+            "location": "not_available",
+            "description": "not_available",
+            "source_url": final_url,
+        })
+
+    news = []
+    for item in signals.get("articles") or []:
+        title = str(item.get("title") or "").strip()
+        if not title:
+            continue
+        news.append({
+            "title": title,
+            "url": str(item.get("url") or final_url).strip(),
+            "date": str(item.get("date") or "not_available").strip() or "not_available",
+            "source_url": final_url,
+        })
+
+    emails = sorted(set(re.findall(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", html)))
+    phones = []
+    for candidate in re.findall(r"(?:\+?47\s*[- ]?)?(?:\d[\s().-]{6,}\d)", html):
+        cleaned = re.sub(r"[^\d+\s().-]", "", candidate)
+        if len(re.sub(r"\D", "", cleaned)) >= 8:
+            phones.append(cleaned.strip())
+    phones = sorted(set(p for p in phones if p and p.strip()))
+
+    addresses = []
+    for selector in ("address", ".address", "[itemprop='address']", "[itemprop='streetAddress']", "[itemprop='location']"):
+        for node in soup.select(selector):
+            text = " ".join(node.get_text(" ", strip=True).split())
+            if text and len(text) >= 8 and not re.fullmatch(r"[\d\s()+-.]+", text):
+                addresses.append(text)
+    if not addresses:
+        for text in re.findall(r"(?:[A-Za-zÆØÅæøå]+\s+){1,5}\d{4}\s+[A-Za-zÆØÅæøå\- ]+", html):
+            addresses.append(" ".join(text.split()))
+    addresses = sorted(set(addresses))
+
+    locations = []
+    for label in sorted(set([item["title"] for item in news if item.get("title")])):
+        locations.append({"label": label, "address": "not_available"})
+    if not locations:
+        for address in addresses[:5]:
+            locations.append({"label": address, "address": address})
+
+    return {
+        "jobs": jobs or "not_available",
+        "news": news or "not_available",
+        "phones": phones or "not_available",
+        "emails": emails or "not_available",
+        "addresses": addresses or "not_available",
+        "locations": locations or "not_available",
+    }
+
+
+def normalize_website_value(value: dict[str, Any] | None) -> dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    pages: list[dict[str, Any]] = []
+    for page in raw.get("pages") or []:
+        if not isinstance(page, dict):
+            continue
+        pages.append({
+            "url": page.get("url") or page.get("final_url") or "",
+            "final_url": page.get("final_url") or "not_available",
+            "title": page.get("title") or "not_available",
+            "status": page.get("status") if page.get("status") is not None else "not_available",
+            "duration_seconds": page.get("duration_seconds") if page.get("duration_seconds") is not None else "not_available",
+            "page_kind": page.get("page_kind") or "not_available",
+            "extraction_state": page.get("extraction_state") or "not_available",
+            "text_excerpt": page.get("text_excerpt") or page.get("main_text_excerpt") or "not_available",
+            "errors": page.get("errors") or [],
+        })
+
+    discovery = raw.get("discovery") if isinstance(raw.get("discovery"), dict) else {}
+    normalized = {
+        "requested_url": raw.get("requested_url") or raw.get("source_url") or "not_available",
+        "final_url": raw.get("final_url") or "not_available",
+        "registered_domain": raw.get("registered_domain") or _registered_domain(raw.get("final_url") or raw.get("requested_url") or "") or "not_available",
+        "title": raw.get("title") or "not_available",
+        "description": raw.get("description") or "not_available",
+        "main_text_excerpt": raw.get("main_text_excerpt") or "not_available",
+        "structured_organisations": raw.get("structured_organisations") or [],
+        "pages": pages,
+        "identity_assessment": raw.get("identity_assessment") or {},
+        "org_number_found": raw.get("org_number_found") if isinstance(raw.get("org_number_found"), bool) else "not_available",
+        "legal_name_match": raw.get("legal_name_match") if isinstance(raw.get("legal_name_match"), bool) else "not_available",
+        "address_match": raw.get("address_match") if isinstance(raw.get("address_match"), bool) else "not_available",
+        "extraction_state": raw.get("extraction_state") or "partial",
+        "content_sha256": raw.get("content_sha256") or "",
+        "crawl_errors": raw.get("crawl_errors") or [],
+        "discovery": {
+            "method": discovery.get("method") or "direct",
+            "providers_used": discovery.get("providers_used") or [],
+            "candidates": discovery.get("candidates") or [],
+            "cost_usd": float(discovery.get("cost_usd", 0.0) or 0.0),
+        },
+        "cost_usd": float(raw.get("cost_usd", 0.0) or 0.0),
+    }
+    for field in ("jobs", "news", "phones", "emails", "addresses", "locations"):
+        value_for_field = raw.get(field)
+        if value_for_field is None or value_for_field == [] or value_for_field == "":
+            normalized[field] = "not_available"
+        else:
+            normalized[field] = value_for_field
+    normalized.pop("social_links", None)
+    normalized.pop("discovered_social_links", None)
+    normalized.pop("social_link_assessments", None)
+    # Preserve social profile links under the canonical public field name.
+    # Source may be 'social_links' (pre-identity-gate) or 'discovered_social_links'
+    # (post-identity-gate rename in identity.py).  Either list is accepted; the first
+    # non-empty one wins.  Each item carries {platform, url} at minimum.
+    raw_social = raw.get("social_links") or raw.get("discovered_social_links") or []
+    if isinstance(raw_social, list) and raw_social:
+        normalized["social_profiles"] = [
+            {"platform": str(item.get("platform") or ""), "url": str(item.get("url") or "")}
+            for item in raw_social
+            if isinstance(item, dict) and item.get("platform") and item.get("url")
+        ] or "not_available"
+    else:
+        normalized["social_profiles"] = "not_available"
+    return normalized
 
 
 def _registered_domain(url: str) -> str:
@@ -192,13 +340,13 @@ def normalize_social_url(url: str) -> dict[str, str] | None:
     return {"platform": platform, "url": f"https://{canonical_host}/{'/'.join(parts)}"}
 
 
-def _priority_links(base_url: str, soup: BeautifulSoup, limit: int = 6) -> list[str]:
+def _priority_links(base_url: str, soup: BeautifulSoup, limit: int = 6) -> list[tuple[str, str]]:
     # Was 4; PRIORITY_TERMS grew from 10 to 13 terms when careers/jobs pages were
     # added, so a 4-link cap on a homepage with contact + news + careers links all
     # present would silently drop one category rather than just fetching an extra
     # page or two (crawl concurrency/per-domain limits already bound the real cost).
     base = urllib.parse.urlparse(base_url)
-    candidates: dict[str, int] = {}
+    candidates: dict[str, tuple[int, str]] = {}
     for anchor in soup.select("a[href]"):
         href = str(anchor.get("href") or "").strip()
         url = urllib.parse.urljoin(base_url, href)
@@ -206,14 +354,20 @@ def _priority_links(base_url: str, soup: BeautifulSoup, limit: int = 6) -> list[
         if parsed.scheme not in {"http", "https"} or parsed.netloc.lower() != base.netloc.lower():
             continue
         haystack = (parsed.path + " " + anchor.get_text(" ", strip=True)).casefold()
-        rank = next((index for index, term in enumerate(PRIORITY_TERMS) if term in haystack), None)
-        if rank is None:
+        match = next(((index, term) for index, term in enumerate(PRIORITY_TERMS) if term in haystack), None)
+        if match is None:
             continue
         clean = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, parsed.path or "/", "", "", ""))
         if clean.rstrip("/") == base_url.rstrip("/"):
             continue
-        candidates[clean] = min(rank, candidates.get(clean, rank))
-    return [url for url, _ in sorted(candidates.items(), key=lambda item: (item[1], item[0]))[:limit]]
+        rank, term = match
+        candidate = (rank, PAGE_KIND_BY_TERM.get(term, "unknown"))
+        if clean not in candidates or rank < candidates[clean][0]:
+            candidates[clean] = candidate
+    return [
+        (url, kind)
+        for url, (_, kind) in sorted(candidates.items(), key=lambda item: (item[1][0], item[0]))[:limit]
+    ]
 
 
 def _fetch_secondary_page(url: str, *, homepage_domain: str, timeout: float, max_bytes: int, organisation_number: str | None = None) -> tuple[dict[str, Any] | None, list[dict[str, str]], int, int, int, str | None, str, int | None]:
@@ -251,10 +405,13 @@ def _fetch_secondary_page(url: str, *, homepage_domain: str, timeout: float, max
         page_soup = BeautifulSoup(page_html, "lxml")
         page_text = trafilatura.extract(page_html, url=final_url, include_links=False, include_tables=False, favor_precision=True) or ""
         page = {
-            "url": final_url,
+            "url": url,
+            "final_url": final_url,
             "title": page_soup.title.get_text(" ", strip=True)[:500] if page_soup.title else "",
             "main_text_excerpt": page_text[:5000],
+            "extraction_state": _extraction_state(page_text, page_soup),
             "content_sha256": __import__("hashlib").sha256(raw).hexdigest(),
+            "html": page_html,
         }
         return page, _social_links(final_url, page_soup), 2, len(raw), elapsed, None, "success", response.status
     except urllib.error.HTTPError as exc:
@@ -294,21 +451,26 @@ def _extraction_state(text: str, soup: BeautifulSoup) -> str:
 
 
 def fetch_website(url: str | None, *, timeout: float = 15.0, max_bytes: int = 2_000_000, organisation_number: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
-    from .crawl_events import classify_failure_class  # local import avoids circular dependency
+    from .crawl_events import classify_failure_class, emit_crawl_event  # local import avoids circular dependency
     from .evidence import utc_now
 
+    emit_crawl_event("crawler_started", organisation_number=organisation_number or "", url=url or "")
     supplied_url = str(url or "").strip()
     supplied_scheme = bool(re.match(r"^https?://", supplied_url, re.I))
     normalized = normalize_homepage(url)
     if not normalized:
+        emit_crawl_event("crawler_completed", organisation_number=organisation_number or "", status="not_found")
         return evidence("website", "not_found", "registry_linked_company_website", "https://data.brreg.no/enhetsregisteret/api/enheter", note="No valid registry website URL"), {"requests": 0, "bytes": 0, "latencies_ms": []}
     try:
         assert_public_url(normalized)
     except ValueError as exc:
+        emit_crawl_event("crawler_completed", organisation_number=organisation_number or "", status="blocked", note=str(exc))
         return evidence("website", "blocked", "registry_linked_company_website", normalized, note=str(exc)), {"requests": 0, "bytes": 0, "latencies_ms": []}
     if not _robots_allowed(normalized, timeout, organisation_number):
+        emit_crawl_event("crawler_completed", organisation_number=organisation_number or "", status="blocked", note="robots.txt disallows this user agent")
         return evidence("website", "blocked", "registry_linked_company_website", normalized, note="robots.txt disallows this user agent"), {"requests": 1, "bytes": 0, "latencies_ms": []}
     started = time.monotonic()
+    emit_crawl_event("homepage_started", url=normalized)
     request = urllib.request.Request(normalized, headers={"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"})
     try:
         with SAFE_OPENER.open(request, timeout=timeout) as response:
@@ -332,6 +494,7 @@ def fetch_website(url: str | None, *, timeout: float = 15.0, max_bytes: int = 2_
         description = str(description_tag.get("content") or "").strip() if description_tag else ""
         homepage_sha256 = __import__("hashlib").sha256(raw).hexdigest()
         homepage_attempted_at = utc_now()
+        homepage_signals = _extract_contact_signals(html, final_url)
         value = {
             "requested_url": normalized,
             "final_url": final_url,
@@ -343,15 +506,31 @@ def fetch_website(url: str | None, *, timeout: float = 15.0, max_bytes: int = 2_
             "structured_organisations": _jsonld_organisations(structured),
             "content_sha256": homepage_sha256,
             "extraction_state": _extraction_state(text, soup),
+            **homepage_signals,
+            "cost_usd": 0.0,
         }
+        from .discovery import mark_direct_discovery
+        from .validation import (
+            append_quarantine_record,
+            validate_website_value,
+            validation_error_details,
+            validation_reason_code,
+        )
+
+        value = mark_direct_discovery(value)
         # Step 2: homepage page ledger entry carries structured outcome fields.
         pages = [{
-            "url": final_url,
+            "url": normalized,
+            "final_url": final_url,
             "title": title[:500],
-            "main_text_excerpt": text[:5000],
+            "text_excerpt": text[:5000] or "not_available",
             "content_sha256": homepage_sha256,
             "failure_class": "success",
-            "http_status": homepage_http_status,
+            "status": homepage_http_status,
+            "duration_seconds": elapsed / 1000,
+            "page_kind": "homepage",
+            "extraction_state": _extraction_state(text, soup),
+            "errors": [],
             "attempted_at": homepage_attempted_at,
             "attempt_number": 1,
         }]
@@ -361,7 +540,10 @@ def fetch_website(url: str | None, *, timeout: float = 15.0, max_bytes: int = 2_
         bytes_received = len(raw)
         page_latencies = [elapsed]
         homepage_domain = value["registered_domain"]
-        for page_url in _priority_links(final_url, soup):
+        priority_links = _priority_links(final_url, soup)
+        emit_crawl_event("links_discovered", url=final_url, count=len(priority_links))
+        for page_url, page_kind in priority_links:
+            emit_crawl_event("page_started", url=page_url, page_kind=page_kind)
             page, page_social, page_requests, page_bytes, page_elapsed, page_error, page_fc, page_http_status = _fetch_secondary_page(
                 page_url,
                 homepage_domain=homepage_domain,
@@ -374,18 +556,38 @@ def fetch_website(url: str | None, *, timeout: float = 15.0, max_bytes: int = 2_
             if page_elapsed:
                 page_latencies.append(page_elapsed)
             if page:
-                # Step 2: secondary page ledger entry carries structured outcome fields.
                 pages.append({
                     **page,
                     "failure_class": page_fc,
-                    "http_status": page_http_status,
+                    "status": page_http_status,
+                    "duration_seconds": page_elapsed / 1000,
+                    "page_kind": page_kind,
+                    "extraction_state": page.get("extraction_state") or "not_available",
+                    "text_excerpt": page.get("main_text_excerpt") or "not_available",
+                    "errors": [],
                     "attempted_at": utc_now(),
                     "attempt_number": 1,
                 })
                 social.extend(page_social)
+                second_signals = _extract_contact_signals(page.get("html") if isinstance(page, dict) and "html" in page else "", page_url)
+                for field in ("jobs", "news", "phones", "emails", "addresses", "locations"):
+                    current = value.get(field)
+                    if current in (None, "not_available"):
+                        value[field] = second_signals.get(field, "not_available")
+                    elif isinstance(current, list) and isinstance(second_signals.get(field), list):
+                        value[field] = current + second_signals.get(field)
             elif page_error:
-                # Step 2: crawl_errors entry carries failure_class, http_status,
-                # attempted_at alongside the legacy free-form error string.
+                pages.append({
+                    "url": page_url,
+                    "final_url": "not_available",
+                    "title": "not_available",
+                    "status": page_http_status,
+                    "duration_seconds": page_elapsed / 1000,
+                    "page_kind": page_kind,
+                    "extraction_state": "failed",
+                    "text_excerpt": "not_available",
+                    "errors": [page_error],
+                })
                 crawl_errors.append({
                     "url": page_url,
                     "error": page_error,
@@ -393,17 +595,58 @@ def fetch_website(url: str | None, *, timeout: float = 15.0, max_bytes: int = 2_
                     "http_status": page_http_status,
                     "attempted_at": utc_now(),
                 })
+            emit_crawl_event("page_completed", url=page_url, page_kind=page_kind, status="success" if page else "failed", error=page_error or "")
         value["pages"] = pages
         value["social_links"] = list({(item["platform"], item["url"]): item for item in social}.values())
         value["crawl_errors"] = crawl_errors
-        return evidence("website", "available", "registry_linked_company_website", final_url, value=value, note="Company-controlled claim layer; not an official registry fact", content_sha256=value["content_sha256"]), {"requests": requests, "bytes": bytes_received, "latencies_ms": page_latencies}
+        value = normalize_website_value(value)
+        try:
+            value = validate_website_value(value)
+        except ValidationError as exc:
+            append_quarantine_record(
+                path=None,
+                record_type="WebsiteValue",
+                record=value,
+                reason_code=validation_reason_code(exc),
+                errors=validation_error_details(exc),
+            )
+            emit_crawl_event(
+                "validation_rejected",
+                organisation_number=organisation_number or "",
+                record_type="WebsiteValue",
+                reason_code=validation_reason_code(exc),
+            )
+            emit_crawl_event(
+                "crawler_completed",
+                organisation_number=organisation_number or "",
+                status="validation_rejected",
+                url=final_url,
+            )
+            return evidence(
+                "website", "source_error", "registry_linked_company_website", final_url,
+                note="Website payload failed schema validation",
+            ), {"requests": requests, "bytes": bytes_received, "latencies_ms": page_latencies}
+        jobs_count = len(value["jobs"]) if isinstance(value["jobs"], list) else 0
+        news_count = len(value["news"]) if isinstance(value["news"], list) else 0
+        emit_crawl_event("jobs_extracted", url=final_url, count=jobs_count)
+        emit_crawl_event("news_extracted", url=final_url, count=news_count)
+        emit_crawl_event("homepage_completed", url=final_url, status="available", pages=len(value["pages"]))
+        emit_crawl_event("identity_check_started", url=final_url)
+        emit_crawl_event("identity_check_completed", url=final_url, status="available")
+        emit_crawl_event("crawler_completed", organisation_number=organisation_number or "", status="available", url=final_url)
+        record = evidence("website", "available", "registry_linked_company_website", final_url, value=value, note="Company-controlled claim layer; not an official registry fact", content_sha256=value["content_sha256"])
+        record["discovery"] = value["discovery"]
+        return record, {"requests": requests, "bytes": bytes_received, "latencies_ms": page_latencies}
     except urllib.error.HTTPError as exc:
         elapsed = int((time.monotonic() - started) * 1000)
         record_request(module="website", provider="website/http", operation="GET homepage", success=False, status=exc.code, duration_ms=elapsed, organisation_number=organisation_number, error=f"HTTP {exc.code}")
+        emit_crawl_event("homepage_completed", url=normalized, status="http_error", code=exc.code)
+        emit_crawl_event("crawler_completed", organisation_number=organisation_number or "", status="http_error", url=normalized)
         status = "not_found" if exc.code in {404, 410} else "source_error"
         return evidence("website", status, "registry_linked_company_website", normalized, note=f"HTTP {exc.code}"), {"requests": 2, "bytes": 0, "latencies_ms": [elapsed]}
     except urllib.error.URLError as exc:
         record_request(module="website", provider="website/http", operation="GET homepage", success=False, status=0, duration_ms=int((time.monotonic() - started) * 1000), organisation_number=organisation_number, error="URLError")
+        emit_crawl_event("homepage_completed", url=normalized, status="source_error", error=str(exc.reason)[:180])
         if not supplied_scheme and normalized.startswith("https://"):
             first_elapsed = int((time.monotonic() - started) * 1000)
             record, metrics = fetch_website("http://" + supplied_url, timeout=timeout, max_bytes=max_bytes)
@@ -411,8 +654,11 @@ def fetch_website(url: str | None, *, timeout: float = 15.0, max_bytes: int = 2_
             metrics["latencies_ms"].insert(0, first_elapsed)
             return record, metrics
         elapsed = int((time.monotonic() - started) * 1000)
+        emit_crawl_event("crawler_completed", organisation_number=organisation_number or "", status="source_error", url=normalized)
         return evidence("website", "source_error", "registry_linked_company_website", normalized, note=f"URLError: {str(exc.reason)[:180]}"), {"requests": 2, "bytes": 0, "latencies_ms": [elapsed]}
     except Exception as exc:
         elapsed = int((time.monotonic() - started) * 1000)
         record_request(module="website", provider="website/http", operation="GET homepage", success=False, status=0, duration_ms=elapsed, organisation_number=organisation_number, error=type(exc).__name__)
+        emit_crawl_event("homepage_completed", url=normalized, status="source_error", error=f"{type(exc).__name__}: {str(exc)[:180]}")
+        emit_crawl_event("crawler_completed", organisation_number=organisation_number or "", status="source_error", url=normalized)
         return evidence("website", "source_error", "registry_linked_company_website", normalized, note=f"{type(exc).__name__}: {str(exc)[:180]}"), {"requests": 2, "bytes": 0, "latencies_ms": [elapsed]}

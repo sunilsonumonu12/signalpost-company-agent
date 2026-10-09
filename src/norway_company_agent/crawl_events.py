@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 import re
+from pathlib import Path
 from typing import Any, Literal
 
 import extruct
@@ -36,6 +39,17 @@ _TRANSPORT_NAMES = frozenset({
     "DNSLookupError", "ConnectionLost", "TunnelError", "SSLError",
     "CertificateError", "OpenSSL.SSL.Error", "URLError", "gaierror",
 })
+
+
+def emit_crawl_event(event_name: str, **payload: Any) -> None:
+    trace_path = os.environ.get("SIGNALPOST_CRAWL_TRACE_PATH")
+    if not trace_path:
+        trace_path = str(Path(os.environ.get("SIGNALPOST_OUTPUT_DIR", "out/latest-run")) / "crawl-trace.jsonl")
+    trace_file = Path(trace_path)
+    trace_file.parent.mkdir(parents=True, exist_ok=True)
+    row = {"event": event_name, "timestamp": utc_now(), **payload}
+    with trace_file.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
 
 
 def classify_failure_class(
@@ -117,6 +131,20 @@ def extract_page_event(
     identity_text = " ".join(node.get_text(" ", strip=True) for node in identity_nodes)
     identity_text = " ".join(identity_text.split())[:3000]
     signals = extract_page_signals(page_html, final_url)
+    from .website import _extract_contact_signals
+    from .website_forensics import build_page_forensics
+
+    contact_signals = _extract_contact_signals(page_html, final_url)
+    forensics = build_page_forensics(
+        organisation_number=organisation_number,
+        requested_url=requested_url,
+        final_url=final_url,
+        http_status=status_code,
+        page_kind=page_kind,
+        html=page_html,
+        extraction_state=_extraction_state(text, soup),
+        signals=signals,
+    )
     event = {
         **base,
         "status": "available",
@@ -126,9 +154,58 @@ def extract_page_event(
         "identity_text_excerpt": identity_text,
         "social_links": signals["social_links"],
         "signals": signals,
+        "forensics": forensics,
+        "contact_signals": {
+            field: contact_signals.get(field, "not_available")
+            for field in ("phones", "emails", "addresses", "locations")
+        },
         "snapshot_path": save_snapshot(body, "html"),
         "extraction_state": _extraction_state(text, soup),
     }
+    if forensics["careers_page_detected"]:
+        emit_crawl_event(
+            "careers_page_detected", organisation_number=organisation_number,
+            url=final_url, status="available", job_links_found=forensics["job_links_found"],
+        )
+    if forensics["job_links_found"]:
+        emit_crawl_event(
+            "jobs_links_detected", organisation_number=organisation_number,
+            url=final_url, count=forensics["job_links_found"],
+        )
+    for candidate in forensics["job_candidates"]:
+        emit_crawl_event(
+            "job_candidate_detected", organisation_number=organisation_number,
+            url=final_url, candidate_url=candidate.get("url"),
+            evidence_kind=candidate.get("evidence_kind"),
+        )
+    for rejection in forensics["job_candidate_rejections"]:
+        emit_crawl_event(
+            "job_candidate_rejected", organisation_number=organisation_number,
+            url=final_url, candidate_url=rejection.get("url"),
+            reason=rejection.get("rejection_reason"),
+        )
+    if forensics["news_page_detected"]:
+        emit_crawl_event(
+            "news_page_detected", organisation_number=organisation_number,
+            url=final_url, status="available", article_links_found=forensics["article_links_found"],
+        )
+    if forensics["article_links_found"]:
+        emit_crawl_event(
+            "news_links_detected", organisation_number=organisation_number,
+            url=final_url, count=forensics["article_links_found"],
+        )
+    for candidate in forensics["article_candidates"]:
+        emit_crawl_event(
+            "news_candidate_detected", organisation_number=organisation_number,
+            url=final_url, candidate_url=candidate.get("url"),
+            evidence_kind=candidate.get("evidence_kind"),
+        )
+    for rejection in forensics["article_candidate_rejections"]:
+        emit_crawl_event(
+            "news_candidate_rejected", organisation_number=organisation_number,
+            url=final_url, candidate_url=rejection.get("url"),
+            reason=rejection.get("rejection_reason"),
+        )
     if page_kind == "homepage":
         structured = extruct.extract(page_html, base_url=final_url, syntaxes=["json-ld", "microdata", "opengraph"])
         event["structured_organisations"] = _jsonld_organisations(structured)
@@ -170,12 +247,55 @@ def error_page_event(
     requested_url: str,
     page_kind: str,
     error: str,
+    failure_class: str | None = None,
+    http_status: int | None = None,
+    attempt_number: int = 1,
 ) -> dict[str, Any]:
+    outcome = classify_failure_class(status_code=http_status or 0, error=error)
+    organization = str(organisation_number)
+    page_forensics = {
+        "organisation_number": organization,
+        "url": requested_url,
+        "final_url": requested_url,
+        "http_status": http_status or 0,
+        "status": "source_error",
+        "title": "not_available",
+        "page_kind": page_kind,
+        "full_cleaned_page_text": "not_available",
+        "all_discovered_links": [],
+        "job_like_links": [],
+        "article_like_links": [],
+        "headings": [],
+        "relevant_meta_tags": [],
+        "jsonld_structured_data": [],
+        "relevant_jsonld": [],
+        "relevant_html_fragments": [],
+        "job_candidates": [],
+        "job_candidate_acceptance_reasons": [],
+        "job_candidate_rejections": [],
+        "article_candidates": [],
+        "article_candidate_acceptance_reasons": [],
+        "article_candidate_rejections": [],
+        "dates_found": [],
+        "normalized_jobs": "not_available",
+        "normalized_news": "not_available",
+        "careers_page_detected": page_kind == "careers",
+        "job_links_found": 0,
+        "job_candidates_found": 0,
+        "jobs_extracted": 0,
+        "news_page_detected": page_kind == "news",
+        "article_links_found": 0,
+        "article_candidates_found": 0,
+        "news_extracted": 0,
+        "extraction_state": "failed",
+        "errors": [error[:240]],
+        "parser_outputs": {"jobs": "not_available", "news": "not_available"},
+    }
     return {
         "organisation_number": organisation_number,
         "requested_url": requested_url,
         "final_url": requested_url,
-        "status_code": 0,
+        "status_code": http_status or 0,
         "content_type": "",
         "page_kind": page_kind,
         "retrieved_at": utc_now(),
@@ -183,6 +303,10 @@ def error_page_event(
         "content_sha256": hashlib.sha256(b"").hexdigest(),
         "status": "source_error",
         "error": error[:240],
+        "failure_class": failure_class or outcome,
+        "http_status": http_status,
+        "attempt_number": attempt_number,
+        "forensics": page_forensics,
     }
 
 
@@ -231,23 +355,45 @@ def merge_profile_events(profile: dict[str, Any], events: list[dict[str, Any]]) 
     unique_pages = {}
     social = {}
     feeds = []
+    signal_values: dict[str, list[Any]] = {
+        "jobs": [], "news": [], "phones": [], "emails": [], "addresses": [], "locations": [],
+    }
     for item in sorted(available, key=lambda value: (value.get("page_kind") != "homepage", value.get("final_url") or "")):
         if item.get("page_kind") == "feed":
             feeds.append(item["feed"])
             continue
+        page_signals = item.get("signals") or {}
+        signal_values["jobs"].extend(page_signals.get("jobs") or [])
+        signal_values["news"].extend(page_signals.get("articles") or [])
+        for field in ("phones", "emails", "addresses", "locations"):
+            signal = (item.get("contact_signals") or {}).get(field)
+            if isinstance(signal, list):
+                signal_values[field].extend(signal)
+        page_signal_record = dict(item.get("signals") or {})
+        page_signal_record.pop("social_links", None)
         page = {
+            "requested_url": item.get("requested_url"),
             "url": item.get("final_url"),
+            "final_url": item.get("final_url"),
             "title": item.get("title") or "",
             "main_text_excerpt": item.get("main_text_excerpt") or "",
+            "text_excerpt": item.get("main_text_excerpt") or "not_available",
             "identity_text_excerpt": item.get("identity_text_excerpt") or "",
             "content_sha256": item.get("content_sha256"),
             "retrieved_at": item.get("retrieved_at"),
+            "status": item.get("status_code") or "not_available",
+            "duration_seconds": item.get("duration_seconds", "not_available"),
+            "page_kind": item.get("page_kind") or "not_available",
+            "extraction_state": item.get("extraction_state") or "not_available",
+            "errors": [],
             "snapshot_path": item.get("snapshot_path"),
-            "signals": item.get("signals") or {},
+            "signals": page_signal_record,
         }
-        unique_pages[item.get("final_url")] = page
+        unique_pages[item.get("final_url") or item.get("requested_url")] = page
         for link in item.get("social_links") or []:
             social[(link.get("platform"), link.get("url"))] = link
+    profile_website = ((profile.get("evidence") or {}).get("website") or {})
+    previous_value = profile_website.get("value") if isinstance(profile_website.get("value"), dict) else {}
     value = {
         "requested_url": homepage.get("requested_url"),
         "final_url": homepage.get("final_url"),
@@ -262,6 +408,10 @@ def merge_profile_events(profile: dict[str, Any], events: list[dict[str, Any]]) 
         "extraction_state": homepage.get("extraction_state"),
         "pages": list(unique_pages.values()),
         "feeds": feeds,
+        **{
+            field: _unique_signal_values(values) or "not_available"
+            for field, values in signal_values.items()
+        },
         "snapshot_path": homepage.get("snapshot_path"),
         "title_span": homepage.get("title_span"),
         "crawl_errors": [
@@ -270,8 +420,19 @@ def merge_profile_events(profile: dict[str, Any], events: list[dict[str, Any]]) 
             if item.get("status") != "available"
         ],
         "scheduler": "scrapy_resumable_v1",
+        "discovery": previous_value.get("discovery") or {
+            "method": "direct", "providers_used": [], "candidates": [], "cost_usd": 0.0,
+        },
+        "cost_usd": previous_value.get("cost_usd", 0.0),
     }
-    return evidence(
+    from .website import normalize_website_value
+
+    value = normalize_website_value(value)
+    jobs_count = len(value["jobs"]) if isinstance(value["jobs"], list) else 0
+    news_count = len(value["news"]) if isinstance(value["news"], list) else 0
+    emit_crawl_event("jobs_extracted", organisation_number=str(profile.get("organisation_number") or ""), url=homepage.get("final_url"), count=jobs_count)
+    emit_crawl_event("news_extracted", organisation_number=str(profile.get("organisation_number") or ""), url=homepage.get("final_url"), count=news_count)
+    record = evidence(
         "website",
         "available",
         "registry_linked_company_website_scrapy",
@@ -280,6 +441,19 @@ def merge_profile_events(profile: dict[str, Any], events: list[dict[str, Any]]) 
         note="Company-controlled claim layer; not an official registry fact",
         retrieved_at=homepage.get("retrieved_at"),
         content_sha256=homepage.get("content_sha256"),
-        snapshot_path=homepage.get("snapshot_path"),
-        extraction_method="company_page_html",
     )
+    record["snapshot_path"] = homepage.get("snapshot_path")
+    record["extraction_method"] = "company_page_html"
+    record["discovery"] = value["discovery"]
+    return record
+
+
+def _unique_signal_values(values: list[Any]) -> list[Any]:
+    unique = []
+    seen = set()
+    for value in values:
+        key = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        if key not in seen:
+            seen.add(key)
+            unique.append(value)
+    return unique

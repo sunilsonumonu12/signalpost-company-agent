@@ -21,7 +21,12 @@ from norway_company_agent.batch import (  # noqa: E402
     terminal_envelope,
 )
 from norway_company_agent.identity import apply_website_identity_gate  # noqa: E402
-from norway_company_agent.official import accounting_obligation_assessment, fetch_official_modules  # noqa: E402
+from norway_company_agent.official import (  # noqa: E402
+    accounting_obligation_assessment,
+    extract_annual_report_workforce,
+    fetch_google_news_mentions,
+    fetch_official_modules,
+)
 from norway_company_agent.website import fetch_website  # noqa: E402
 
 
@@ -173,6 +178,8 @@ def _build_failure_profile(organisation_number: str, modules: set[str], error_me
         "group": "official_group_structure",
         "locations": "official_subunits",
         "accounting_obligation": "official_rule_interpretation",
+        "workforce": "official_annual_account_copy",
+        "google_news": "google_news_rss",
         "website": "registry_linked_company_website",
         "registry": "official_registry_live",
     }
@@ -217,6 +224,10 @@ def collect_profile(
         backfill_from_registry_live(profile)
         if "accounting_obligation" in modules:
             evidence["accounting_obligation"] = accounting_obligation_assessment(profile)
+        if "workforce" in modules:
+            evidence["workforce"] = extract_annual_report_workforce(profile)
+        if "google_news" in modules:
+            evidence["google_news"] = fetch_google_news_mentions(profile)
         if "website" in modules:
             website_record, _ = fetch_website(profile.get("website"), organisation_number=organisation_number)
             gated = apply_website_identity_gate(profile, website_record)
@@ -256,6 +267,8 @@ def collect_profile(
             "group": "official_group_structure",
             "locations": "official_subunits",
             "accounting_obligation": "official_rule_interpretation",
+            "workforce": "official_annual_account_copy",
+            "google_news": "google_news_rss",
             "website": "registry_linked_company_website",
             "registry": "official_registry_live",
         }
@@ -384,6 +397,14 @@ def main() -> int:
         failed_count = len(failed_orgs)
         successful = len(collected) - failed_count
 
+    identity_decisions: dict[str, int] = {}
+    for row in collected:
+        website_value = (((row.get("evidence") or {}).get("website") or {}).get("value") or {})
+        assessment = website_value.get("identity_assessment") if isinstance(website_value, dict) else None
+        decision = str((assessment or {}).get("decision") or "")
+        if decision:
+            identity_decisions[decision] = identity_decisions.get(decision, 0) + 1
+
     # Concise failure summary print
     print("", flush=True)
     print("=" * 60, flush=True)
@@ -415,6 +436,17 @@ def main() -> int:
         "failed": failed_count,
         "failed_orgs": failed_orgs,
         "total_retries": total_retries,
+        "identity_decisions": identity_decisions,
+        "validation": {
+            "website_values_accepted": sum(
+                1 for row in collected
+                if ((row.get("evidence") or {}).get("website") or {}).get("status") == "available"
+            ),
+            "website_values_rejected": sum(
+                1 for row in collected
+                if "schema validation" in str((((row.get("evidence") or {}).get("website") or {}).get("note") or "")).casefold()
+            ),
+        },
     }
     Path(args.report).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return 0

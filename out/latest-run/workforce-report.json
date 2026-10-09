@@ -1,0 +1,227 @@
+{
+  "connector": "official_annual_report_workforce_v1",
+  "eligible": 20,
+  "accepted": 15,
+  "status_counts": {
+    "registry_count_already_available": 5,
+    "accepted": 15
+  },
+  "claim_boundary": "Latest official PDF, exact organisation number in document, company-scope employee phrase only; group phrases and conflicts abstain.",
+  "company_results": [
+    {
+      "organisation_number": "810034882",
+      "status": "registry_count_already_available"
+    },
+    {
+      "organisation_number": "810059672",
+      "status": "accepted",
+      "workforce_value": 0,
+      "measure": "full_time_equivalents",
+      "report_year": "2025",
+      "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/810059672/2025",
+      "pdf_text_characters": 13,
+      "extracted_text_path": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\workforce-cache\\810059672-2025-extracted.txt",
+      "ocr_required": true,
+      "ocr_used": true,
+      "cache_hit": false
+    },
+    {
+      "organisation_number": "810094532",
+      "status": "accepted",
+      "workforce_value": 0,
+      "measure": "full_time_equivalents",
+      "report_year": "2025",
+      "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/810094532/2025",
+      "pdf_text_characters": 7,
+      "extracted_text_path": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\workforce-cache\\810094532-2025-extracted.txt",
+      "ocr_required": true,
+      "ocr_used": true,
+      "cache_hit": false
+    },
+    {
+      "organisation_number": "810098252",
+      "status": "accepted",
+      "workforce_value": 1.3,
+      "measure": "full_time_equivalents",
+      "report_year": "2025",
+      "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/810098252/2025",
+      "pdf_text_characters": 16,
+      "extracted_text_path": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\workforce-cache\\810098252-2025-extracted.txt",
+      "ocr_required": true,
+      "ocr_used": true,
+      "cache_hit": false
+    },
+    {
+      "organisation_number": "810105372",
+      "status": "accepted",
+      "workforce_value": 0,
+      "measure": "full_time_equivalents",
+      "report_year": "2025",
+      "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/810105372/2025",
+      "pdf_text_characters": 6,
+      "extracted_text_path": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\workforce-cache\\810105372-2025-extracted.txt",
+      "ocr_required": true,
+      "ocr_used": true,
+      "cache_hit": false
+    },
+    {
+      "organisation_number": "810130822",
+      "status": "accepted",
+      "workforce_value": 2,
+      "measure": "full_time_equivalents",
+      "report_year": "2025",
+      "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/810130822/2025",
+      "pdf_text_characters": 12,
+      "extracted_text_path": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\workforce-cache\\810130822-2025-extracted.txt",
+      "ocr_required": true,
+      "ocr_used": true,
+      "cache_hit": false
+    },
+    {
+      "organisation_number": "810182482",
+      "status": "registry_count_already_available"
+    },
+    {
+      "organisation_number": "810202572",
+      "status": "accepted",
+      "workforce_value": 0,
+      "measure": "full_time_equivalents",
+      "report_year": "2025",
+      "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/810202572/2025",
+      "pdf_text_characters": 15,
+      "extracted_text_path": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\workforce-cache\\810202572-2025-extracted.txt",
+      "ocr_required": true,
+      "ocr_used": true,
+      "cache_hit": false
+    },
+    {
+      "organisation_number": "810274042",
+      "status": "accepted",
+      "workforce_value": 0,
+      "measure": "full_time_equivalents",
+      "report_year": "2025",
+      "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/810274042/2025",
+      "pdf_text_characters": 11,
+      "extracted_text_path": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\workforce-cache\\810274042-2025-extracted.txt",
+      "ocr_required": true,
+      "ocr_used": true,
+      "cache_hit": false
+    },
+    {
+      "organisation_number": "810324562",
+      "status": "accepted",
+      "workforce_value": 0,
+      "measure": "full_time_equivalents",
+      "report_year": "2025",
+      "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/810324562/2025",
+      "pdf_text_characters": 24,
+      "extracted_text_path": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\workforce-cache\\810324562-2025-extracted.txt",
+      "ocr_required": true,
+      "ocr_used": true,
+      "cache_hit": false
+    },
+    {
+      "organisation_number": "810359862",
+      "status": "registry_count_already_available"
+    },
+    {
+      "organisation_number": "810363142",
+      "status": "accepted",
+      "workforce_value": 0,
+      "measure": "full_time_equivalents",
+      "report_year": "2025",
+      "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/810363142/2025",
+      "pdf_text_characters": 19,
+      "extracted_text_path": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\workforce-cache\\810363142-2025-extracted.txt",
+      "ocr_required": true,
+      "ocr_used": true,
+      "cache_hit": false
+    },
+    {
+      "organisation_number": "810392312",
+      "status": "registry_count_already_available"
+    },
+    {
+      "organisation_number": "810393572",
+      "status": "accepted",
+      "workforce_value": 0,
+      "measure": "full_time_equivalents",
+      "report_year": "2025",
+      "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/810393572/2025",
+      "pdf_text_characters": 22,
+      "extracted_text_path": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\workforce-cache\\810393572-2025-extracted.txt",
+      "ocr_required": true,
+      "ocr_used": true,
+      "cache_hit": false
+    },
+    {
+      "organisation_number": "810412402",
+      "status": "accepted",
+      "workforce_value": 0,
+      "measure": "full_time_equivalents",
+      "report_year": "2025",
+      "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/810412402/2025",
+      "pdf_text_characters": 23,
+      "extracted_text_path": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\workforce-cache\\810412402-2025-extracted.txt",
+      "ocr_required": true,
+      "ocr_used": true,
+      "cache_hit": false
+    },
+    {
+      "organisation_number": "810431172",
+      "status": "accepted",
+      "workforce_value": 0,
+      "measure": "full_time_equivalents",
+      "report_year": "2025",
+      "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/810431172/2025",
+      "pdf_text_characters": 12,
+      "extracted_text_path": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\workforce-cache\\810431172-2025-extracted.txt",
+      "ocr_required": true,
+      "ocr_used": true,
+      "cache_hit": false
+    },
+    {
+      "organisation_number": "810432322",
+      "status": "accepted",
+      "workforce_value": 1,
+      "measure": "full_time_equivalents",
+      "report_year": "2025",
+      "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/810432322/2025",
+      "pdf_text_characters": 16,
+      "extracted_text_path": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\workforce-cache\\810432322-2025-extracted.txt",
+      "ocr_required": true,
+      "ocr_used": true,
+      "cache_hit": false
+    },
+    {
+      "organisation_number": "810438452",
+      "status": "registry_count_already_available"
+    },
+    {
+      "organisation_number": "810441682",
+      "status": "accepted",
+      "workforce_value": 0,
+      "measure": "full_time_equivalents",
+      "report_year": "2025",
+      "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/810441682/2025",
+      "pdf_text_characters": 17,
+      "extracted_text_path": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\workforce-cache\\810441682-2025-extracted.txt",
+      "ocr_required": true,
+      "ocr_used": true,
+      "cache_hit": false
+    },
+    {
+      "organisation_number": "810463902",
+      "status": "accepted",
+      "workforce_value": 0,
+      "measure": "full_time_equivalents",
+      "report_year": "2025",
+      "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/810463902/2025",
+      "pdf_text_characters": 16,
+      "extracted_text_path": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\workforce-cache\\810463902-2025-extracted.txt",
+      "ocr_required": true,
+      "ocr_used": true,
+      "cache_hit": false
+    }
+  ]
+}

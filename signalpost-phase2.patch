@@ -1,0 +1,2692 @@
+--- a/run.py
++++ b/run.py
+@@ -1,296 +1,441 @@
+-#!/usr/bin/env python3
+-"""Simple launcher for a clean, repeatable SignalPost agent run."""
+-from __future__ import annotations
+-
+-import argparse
+-import importlib.util
+-import json
+-import os
+-import shutil
+-import subprocess
+-import sys
+-import time
+-from datetime import datetime, timezone
+-from pathlib import Path
+-
+-
+-PROJECT_ROOT = Path(__file__).resolve().parent
+-DEFAULT_INPUT = PROJECT_ROOT / "entry-companies.jsonl"
+-WORK_DIR = PROJECT_ROOT / "out" / "latest-run"
+-RESULT_FILE = PROJECT_ROOT / "result" / "envelopes.jsonl"
+-sys.path.insert(0, str(PROJECT_ROOT / "src"))
+-from norway_company_agent.batch import read_organisation_inputs  # noqa: E402
+-from norway_company_agent.env import load_local_env  # noqa: E402
+-
+-
+-def configure_tesseract_path() -> str | None:
+-    executable = shutil.which("tesseract")
+-    if executable:
+-        return executable
+-    tesseract_dir = Path(os.environ.get("TESSERACT_DIR", r"C:\Program Files\Tesseract-OCR"))
+-    candidate = tesseract_dir / "tesseract.exe"
+-    if candidate.is_file():
+-        os.environ["PATH"] = str(tesseract_dir) + os.pathsep + os.environ.get("PATH", "")
+-        return str(candidate)
+-    return None
+-
+-
+-def clear_public_outputs(directory: Path = PROJECT_ROOT / "out") -> None:
+-    if not directory.exists():
+-        return
+-    for path in directory.iterdir():
+-        if path.is_file() and len(path.stem) == 9 and path.stem.isdigit() and path.suffix == ".jsonl":
+-            path.unlink()
+-
+-
+-def count_organisations(path: Path) -> int:
+-    """Count only validated, unique organisation numbers using the shared reader."""
+-    return len(read_organisation_inputs(path))
+-
+-
+-def read_progress(path: Path) -> dict:
+-    try:
+-        value = json.loads(path.read_text(encoding="utf-8"))
+-    except (OSError, json.JSONDecodeError, PermissionError):
+-        return {}
+-    return value if isinstance(value, dict) else {}
+-
+-
+-def read_stage(path: Path) -> str:
+-    try:
+-        return path.read_text(encoding="utf-8").strip() or "starting"
+-    except OSError:
+-        return "starting"
+-
+-
+-def elapsed_seconds(started: float) -> float:
+-    return max(0.0, time.monotonic() - started)
+-
+-
+-def emit_status(
+-    *,
+-    progress_path: Path,
+-    stage_path: Path,
+-    expected_count: int,
+-    started: float,
+-) -> None:
+-    state = read_progress(progress_path)
+-    elapsed = elapsed_seconds(started)
+-    completed = int(state.get("completed", 0))
+-    successful = int(state.get("successful", 0))
+-    failed = int(state.get("failed", 0))
+-    active = int(state.get("active", 0))
+-    rate = completed / elapsed if elapsed else 0.0
+-    stage = read_stage(stage_path)
+-    last_completed_company = state.get("last_completed_company") or state.get("last_company")
+-    last_progress_at = float(state.get("last_progress_at", time.time()))
+-    since_last_completion = max(0, int(time.time() - last_progress_at))
+-    total_companies = max(expected_count, int(state.get("total", expected_count) or expected_count))
+-
+-    print(
+-        f"[{datetime.now().strftime('%H:%M:%S')}] PROGRESS | "
+-        f"companies={completed}/{total_companies} | "
+-        f"completed={completed} | success={successful} | failed={failed} | "
+-        f"active={active} | rate={rate:.2f} companies/sec | elapsed={int(elapsed)}s | "
+-        f"last_company={last_completed_company or 'n/a'} | since_last_completion={since_last_completion}s"
+-    )
+-
+-
+-def run_with_progress(command: list[str], *, expected_count: int, progress_interval: float) -> tuple[int, dict, float]:
+-    progress_path = WORK_DIR / "progress.json"
+-    stage_path = WORK_DIR / "progress-stage.txt"
+-    started = time.monotonic()
+-    process = subprocess.Popen(command, cwd=PROJECT_ROOT)
+-    print(f"[{datetime.now().strftime('%H:%M:%S')}] RUN STARTED | total={expected_count}", flush=True)
+-    next_report = started + progress_interval
+-
+-    while True:
+-        now = time.monotonic()
+-        if process.poll() is not None:
+-            break
+-        wait_for = max(0.05, min(1.0, next_report - now))
+-        try:
+-            process.wait(timeout=wait_for)
+-            break
+-        except subprocess.TimeoutExpired:
+-            now = time.monotonic()
+-            if now >= next_report:
+-                emit_status(
+-                    progress_path=progress_path,
+-                    stage_path=stage_path,
+-                    expected_count=expected_count,
+-                    started=started,
+-                )
+-                next_report = now + progress_interval
+-
+-    elapsed = elapsed_seconds(started)
+-    return int(process.returncode or 0), read_progress(progress_path), elapsed
+-
+-
+-def print_final_summary(*, success: bool, expected_count: int, state: dict, elapsed: float, return_code: int) -> None:
+-    completed = int(state.get("completed", 0))
+-    successful = int(state.get("successful", 0))
+-    failed = int(state.get("failed", 0))
+-    rate = completed / elapsed if elapsed else 0.0
+-    if success:
+-        print(
+-            f"[{datetime.now().strftime('%H:%M:%S')}] COMPLETE | "
+-            f"companies={completed}/{expected_count} | success={successful} | failed={failed} | "
+-            f"elapsed={int(elapsed)}s | rate={rate:.2f} companies/sec"
+-        )
+-        return
+-
+-    last_progress_at = float(state.get("last_progress_at", 0))
+-    last_progress = max(0, int(time.time() - last_progress_at)) if last_progress_at else int(elapsed)
+-    root_error = state.get("root_error") or f"Pipeline exited with code {return_code}. See traceback above."
+-    print(
+-        f"[{datetime.now().strftime('%H:%M:%S')}] FAILED | "
+-        f"companies={completed}/{expected_count} | success={successful} | failed={failed} | "
+-        f"elapsed={int(elapsed)}s | last_progress={last_progress}s | root_error={root_error}"
+-    )
+-
+-
+-def main() -> int:
+-    parser = argparse.ArgumentParser(description="Run SignalPost and write one envelope JSONL for all organisations.")
+-    parser.add_argument("--organisations", type=Path, default=DEFAULT_INPUT,
+-                        help="Organisation input path (default: entry-companies.jsonl).")
+-    parser.add_argument("--progress-interval", type=float, default=30.0, help="Seconds between live progress reports")
+-    parser.add_argument(
+-        "--source-envelopes",
+-        type=Path,
+-        help="Convert an existing populated envelope JSONL without rerunning collection.",
+-    )
+-    parser.add_argument("--include-workforce-ocr", dest="skip_workforce_ocr", action="store_false", default=True,
+-                        help="Enable annual-report OCR workforce extraction (default: disabled).")
+-    parser.add_argument("--skip-workforce-ocr", dest="skip_workforce_ocr", action="store_true",
+-                        help="Leave annual-report OCR workforce extraction disabled (default).")
+-    parser.add_argument("--include-deep-crawl", dest="skip_deep_crawl", action="store_false", default=False,
+-                        help="Enable the multi-page website crawl (default: enabled).")
+-    parser.add_argument("--skip-deep-crawl", dest="skip_deep_crawl", action="store_true",
+-                        help="Skip the multi-page website crawl (default: disabled).")
+-    args = parser.parse_args()
+-    load_local_env(PROJECT_ROOT)
+-    configure_tesseract_path()
+-
+-    if args.source_envelopes:
+-        source = args.source_envelopes
+-        if not source.is_absolute():
+-            source = PROJECT_ROOT / source
+-        if not source.exists():
+-            parser.error(f"Source envelope file not found: {source}")
+-        clear_public_outputs()
+-        RESULT_FILE.parent.mkdir(parents=True, exist_ok=True)
+-        command = [
+-            sys.executable,
+-            str(PROJECT_ROOT / "scripts" / "build_output_contract.py"),
+-            "--profiles",
+-            str(source),
+-            "--output",
+-            str(RESULT_FILE),
+-            "--report",
+-            str(WORK_DIR / "source-contract-report.json"),
+-        ]
+-        completed = subprocess.run(command, cwd=PROJECT_ROOT, capture_output=True, text=True)
+-        if completed.returncode != 0:
+-            if completed.stderr:
+-                print(completed.stderr, file=sys.stderr, end="")
+-            return completed.returncode
+-        produced = sum(1 for line in RESULT_FILE.read_text(encoding="utf-8").splitlines() if line.strip())
+-        expected = sum(1 for line in source.read_text(encoding="utf-8").splitlines() if line.strip())
+-        print(f"Converted {produced}/{expected} envelopes to {RESULT_FILE}.")
+-        return 0 if produced == expected else 1
+-
+-    organisations = args.organisations
+-    if not organisations.is_absolute():
+-        organisations = PROJECT_ROOT / organisations
+-    if not organisations.exists():
+-        parser.error(f"Organisation file not found: {organisations}")
+-
+-    try:
+-        expected_count = count_organisations(organisations)
+-    except (OSError, ValueError) as exc:
+-        parser.error(f"Invalid organisation input {organisations}: {exc}")
+-    if expected_count == 0:
+-        parser.error(f"Organisation file contains no organisation numbers: {organisations}")
+-    if args.progress_interval <= 0:
+-        parser.error("--progress-interval must be positive")
+-
+-    run_id = "run-" + datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
+-    if WORK_DIR.exists():
+-        shutil.rmtree(WORK_DIR)
+-    clear_public_outputs()
+-    RESULT_FILE.parent.mkdir(parents=True, exist_ok=True)
+-    if RESULT_FILE.exists():
+-        RESULT_FILE.unlink()
+-
+-    command = [
+-        sys.executable,
+-        str(PROJECT_ROOT / "scripts" / "run_agent.py"),
+-        "--organisations",
+-        str(organisations),
+-        "--output-dir",
+-        str(WORK_DIR),
+-        "--run-id",
+-        run_id,
+-        "--expected-count",
+-        str(expected_count),
+-    ]
+-    if not args.skip_workforce_ocr:
+-        command.append("--include-workforce-ocr")
+-    if not args.skip_deep_crawl:
+-        command.append("--include-deep-crawl")
+-
+-    return_code, progress, elapsed = run_with_progress(
+-        command,
+-        expected_count=expected_count,
+-        progress_interval=args.progress_interval,
+-    )
+-    source = WORK_DIR / "envelopes.jsonl"
+-    envelopes_produced = source.exists()
+-    produced_envelope_count = 0
+-    if envelopes_produced:
+-        try:
+-            produced_envelope_count = sum(1 for line in source.read_text(encoding="utf-8").splitlines() if line.strip())
+-        except OSError:
+-            produced_envelope_count = 0
+-    if return_code != 0 and envelopes_produced and produced_envelope_count >= expected_count:
+-        print(
+-            f"[{datetime.now().strftime('%H:%M:%S')}] NOTICE | subprocess exited with code {return_code} "
+-            f"but {produced_envelope_count}/{expected_count} envelopes were produced; treating as completed-with-failures.",
+-            file=sys.stderr,
+-        )
+-        return_code = 0
+-    if return_code != 0:
+-        print_final_summary(success=False, expected_count=expected_count, state=progress, elapsed=elapsed, return_code=return_code)
+-        if source.exists():
+-            produced_envelope_count = sum(1 for line in source.read_text(encoding="utf-8").splitlines() if line.strip())
+-            print(
+-                f"Run reported failure but {produced_envelope_count} envelopes exist at {source}. "
+-                f"Intermediate files kept in {WORK_DIR}",
+-                file=sys.stderr,
+-            )
+-            if produced_envelope_count:
+-                shutil.copy2(source, RESULT_FILE)
+-                print(f"Partial envelope output preserved at {RESULT_FILE}", file=sys.stderr)
+-        else:
+-            print(f"Run failed. Intermediate files were kept in {WORK_DIR}", file=sys.stderr)
+-        return return_code
+-
+-    if not envelopes_produced:
+-        print(f"Run finished but envelope file was not created: {source}", file=sys.stderr)
+-        return 1
+-    RESULT_FILE.parent.mkdir(parents=True, exist_ok=True)
+-    shutil.copy2(source, RESULT_FILE)
+-    print_final_summary(success=True, expected_count=expected_count, state=progress, elapsed=elapsed, return_code=0)
+-    if produced_envelope_count != expected_count:
+-        print(
+-            f"[{datetime.now().strftime('%H:%M:%S')}] WARNING | envelope count mismatch "
+-            f"({produced_envelope_count} vs expected {expected_count}); copied to result anyway.",
+-            file=sys.stderr,
+-        )
+-    print(f"Final output: {RESULT_FILE}")
+-    return 0
+-
+-
+-if __name__ == "__main__":
+-    raise SystemExit(main())
+\ No newline at end of file
++#!/usr/bin/env python3
++"""Launcher for resumable SignalPost agent runs."""
++from __future__ import annotations
++
++import argparse
++import hashlib
++import json
++import os
++import re
++import shutil
++import subprocess
++import sys
++import time
++import uuid
++from datetime import datetime, timezone
++from pathlib import Path
++
++
++PROJECT_ROOT = Path(__file__).resolve().parent
++DEFAULT_INPUT = PROJECT_ROOT / "entry-companies.jsonl"
++OUT_DIR = PROJECT_ROOT / "out"
++WORK_DIR = OUT_DIR / "latest-run"  # Set to out/<run_id> in main().
++RESULT_FILE = PROJECT_ROOT / "result" / "envelopes.jsonl"
++LATEST_RUN_ID_FILE = OUT_DIR / ".latest-run-id"
++INPUT_HASH_FILE = "input.sha256"
++sys.path.insert(0, str(PROJECT_ROOT / "src"))
++from norway_company_agent.batch import read_organisation_inputs  # noqa: E402
++from norway_company_agent.env import load_local_env  # noqa: E402
++
++
++def configure_tesseract_path() -> str | None:
++    executable = shutil.which("tesseract")
++    if executable:
++        return executable
++    tesseract_dir = Path(os.environ.get("TESSERACT_DIR", r"C:\Program Files\Tesseract-OCR"))
++    candidate = tesseract_dir / "tesseract.exe"
++    if candidate.is_file():
++        os.environ["PATH"] = str(tesseract_dir) + os.pathsep + os.environ.get("PATH", "")
++        return str(candidate)
++    return None
++
++
++def clear_public_outputs(directory: Path = OUT_DIR) -> None:
++    """Delete legacy per-company JSONL outputs; called only in --fresh mode."""
++    if not directory.exists():
++        return
++    for path in directory.iterdir():
++        if path.is_file() and len(path.stem) == 9 and path.stem.isdigit() and path.suffix == ".jsonl":
++            path.unlink()
++
++
++def clear_run_outputs() -> None:
++    """The only path that removes prior run output and the public result."""
++    clear_public_outputs(OUT_DIR)
++    if OUT_DIR.exists():
++        shutil.rmtree(OUT_DIR)
++    RESULT_FILE.unlink(missing_ok=True)
++
++
++def sha256_file(path: Path) -> str:
++    digest = hashlib.sha256()
++    with path.open("rb") as handle:
++        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
++            digest.update(chunk)
++    return digest.hexdigest()
++
++
++def atomic_write_text(path: Path, value: str) -> None:
++    path.parent.mkdir(parents=True, exist_ok=True)
++    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
++    try:
++        with temporary.open("w", encoding="utf-8", newline="") as handle:
++            handle.write(value)
++            handle.flush()
++            os.fsync(handle.fileno())
++        os.replace(temporary, path)
++    finally:
++        temporary.unlink(missing_ok=True)
++
++
++def atomic_copy_file(source: Path, destination: Path) -> None:
++    """Publish a complete copy atomically so a crash cannot truncate destination."""
++    destination.parent.mkdir(parents=True, exist_ok=True)
++    temporary = destination.with_name(f".{destination.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
++    try:
++        shutil.copyfile(source, temporary)
++        with temporary.open("rb+") as handle:
++            os.fsync(handle.fileno())
++        os.replace(temporary, destination)
++    finally:
++        temporary.unlink(missing_ok=True)
++
++
++def valid_run_id(value: str) -> bool:
++    return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", value)) and value not in {".", ".."}
++
++
++def generate_run_id() -> str:
++    return "run-" + datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
++
++
++def resolve_run_id(requested: str | None, *, fresh: bool) -> str:
++    if requested:
++        if not valid_run_id(requested):
++            raise ValueError("--run-id may contain only letters, digits, dot, underscore, and hyphen")
++        return requested
++
++    if not fresh:
++        try:
++            saved_id = LATEST_RUN_ID_FILE.read_text(encoding="utf-8").strip()
++            if (
++                valid_run_id(saved_id)
++                and (OUT_DIR / saved_id).is_dir()
++                and ((OUT_DIR / saved_id) / INPUT_HASH_FILE).is_file()
++            ):
++                return saved_id
++        except OSError:
++            pass
++
++        # Recover the most recent managed run if its small pointer file was lost.
++        candidates = [
++            child for child in OUT_DIR.iterdir()
++            if child.is_dir() and valid_run_id(child.name) and (child / INPUT_HASH_FILE).is_file()
++        ] if OUT_DIR.exists() else []
++        if candidates:
++            return max(candidates, key=lambda item: item.stat().st_mtime).name
++
++    candidate = generate_run_id()
++    while (OUT_DIR / candidate).exists():
++        candidate = generate_run_id()
++    return candidate
++
++
++def count_organisations(path: Path) -> int:
++    """Count only validated, unique organisation numbers using the shared reader."""
++    return len(read_organisation_inputs(path))
++
++
++def read_progress(path: Path) -> dict:
++    try:
++        value = json.loads(path.read_text(encoding="utf-8"))
++    except (OSError, json.JSONDecodeError, PermissionError):
++        return {}
++    return value if isinstance(value, dict) else {}
++
++
++def read_stage(path: Path) -> str:
++    try:
++        return path.read_text(encoding="utf-8").strip() or "starting"
++    except OSError:
++        return "starting"
++
++
++def elapsed_seconds(started: float) -> float:
++    return max(0.0, time.monotonic() - started)
++
++
++def emit_status(
++    *,
++    progress_path: Path,
++    stage_path: Path,
++    expected_count: int,
++    started: float,
++) -> None:
++    state = read_progress(progress_path)
++    elapsed = elapsed_seconds(started)
++    completed = int(state.get("completed", 0))
++    successful = int(state.get("successful", 0))
++    failed = int(state.get("failed", 0))
++    active = int(state.get("active", 0))
++    rate = completed / elapsed if elapsed else 0.0
++    stage = read_stage(stage_path)
++    last_completed_company = state.get("last_completed_company") or state.get("last_company")
++    last_progress_at = float(state.get("last_progress_at", time.time()))
++    since_last_completion = max(0, int(time.time() - last_progress_at))
++    total_companies = max(expected_count, int(state.get("total", expected_count) or expected_count))
++
++    print(
++        f"[{datetime.now().strftime('%H:%M:%S')}] PROGRESS | "
++        f"companies={completed}/{total_companies} | "
++        f"completed={completed} | success={successful} | failed={failed} | "
++        f"active={active} | rate={rate:.2f} companies/sec | elapsed={int(elapsed)}s | "
++        f"last_company={last_completed_company or 'n/a'} | since_last_completion={since_last_completion}s"
++    )
++
++
++def run_with_progress(command: list[str], *, expected_count: int, progress_interval: float) -> tuple[int, dict, float]:
++    progress_path = WORK_DIR / "progress.json"
++    stage_path = WORK_DIR / "progress-stage.txt"
++    started = time.monotonic()
++    process = subprocess.Popen(command, cwd=PROJECT_ROOT)
++    print(f"[{datetime.now().strftime('%H:%M:%S')}] RUN STARTED | total={expected_count}", flush=True)
++    next_report = started + progress_interval
++
++    while True:
++        now = time.monotonic()
++        if process.poll() is not None:
++            break
++        wait_for = max(0.05, min(1.0, next_report - now))
++        try:
++            process.wait(timeout=wait_for)
++            break
++        except subprocess.TimeoutExpired:
++            now = time.monotonic()
++            if now >= next_report:
++                emit_status(
++                    progress_path=progress_path,
++                    stage_path=stage_path,
++                    expected_count=expected_count,
++                    started=started,
++                )
++                next_report = now + progress_interval
++
++    elapsed = elapsed_seconds(started)
++    return int(process.returncode or 0), read_progress(progress_path), elapsed
++
++
++def print_final_summary(*, success: bool, expected_count: int, state: dict, elapsed: float, return_code: int) -> None:
++    completed = int(state.get("completed", 0))
++    successful = int(state.get("successful", 0))
++    failed = int(state.get("failed", 0))
++    rate = completed / elapsed if elapsed else 0.0
++    if success:
++        print(
++            f"[{datetime.now().strftime('%H:%M:%S')}] COMPLETE | "
++            f"companies={completed}/{expected_count} | success={successful} | failed={failed} | "
++            f"elapsed={int(elapsed)}s | rate={rate:.2f} companies/sec"
++        )
++        return
++
++    last_progress_at = float(state.get("last_progress_at", 0))
++    last_progress = max(0, int(time.time() - last_progress_at)) if last_progress_at else int(elapsed)
++    root_error = state.get("root_error") or f"Pipeline exited with code {return_code}. See traceback above."
++    print(
++        f"[{datetime.now().strftime('%H:%M:%S')}] FAILED | "
++        f"companies={completed}/{expected_count} | success={successful} | failed={failed} | "
++        f"elapsed={int(elapsed)}s | last_progress={last_progress}s | root_error={root_error}"
++    )
++
++
++def main() -> int:
++    global WORK_DIR
++
++    parser = argparse.ArgumentParser(description="Run SignalPost and resume safely by default.")
++    parser.add_argument("--organisations", type=Path, default=DEFAULT_INPUT,
++                        help="Organisation input path (default: entry-companies.jsonl).")
++    parser.add_argument("--run-id", help="Resume this run ID (stored under out/<run_id>).")
++    parser.add_argument("--fresh", action="store_true",
++                        help="Delete out/ and result/envelopes.jsonl before starting a new run.")
++    parser.add_argument("--progress-interval", type=float, default=30.0, help="Seconds between live progress reports")
++    parser.add_argument(
++        "--source-envelopes",
++        type=Path,
++        help="Convert an existing populated envelope JSONL without rerunning collection.",
++    )
++    parser.add_argument("--include-workforce-ocr", dest="skip_workforce_ocr", action="store_false", default=True,
++                        help="Enable annual-report OCR workforce extraction (default: disabled).")
++    parser.add_argument("--skip-workforce-ocr", dest="skip_workforce_ocr", action="store_true",
++                        help="Leave annual-report OCR workforce extraction disabled (default).")
++    parser.add_argument("--include-deep-crawl", dest="skip_deep_crawl", action="store_false", default=False,
++                        help="Enable the multi-page website crawl (default: enabled).")
++    parser.add_argument("--skip-deep-crawl", dest="skip_deep_crawl", action="store_true",
++                        help="Skip the multi-page website crawl (default: disabled).")
++    args = parser.parse_args()
++    load_local_env(PROJECT_ROOT)
++    configure_tesseract_path()
++
++    if args.run_id and not valid_run_id(args.run_id):
++        parser.error("--run-id may contain only letters, digits, dot, underscore, and hyphen")
++
++    if args.source_envelopes:
++        source = args.source_envelopes
++        if not source.is_absolute():
++            source = PROJECT_ROOT / source
++        if not source.exists():
++            parser.error(f"Source envelope file not found: {source}")
++        if args.fresh:
++            # Preserve an input stored under out/ long enough to convert it.
++            preserved_source: Path | None = None
++            try:
++                source.resolve().relative_to(OUT_DIR.resolve())
++                preserved_source = PROJECT_ROOT / f".source-envelopes-{uuid.uuid4().hex}.jsonl"
++                shutil.copy2(source, preserved_source)
++                source = preserved_source
++            except ValueError:
++                pass
++            clear_run_outputs()
++            if preserved_source is not None:
++                # The temporary source is outside out/ and will be removed below.
++                pass
++        source_work_id = args.run_id or "latest-run"
++        WORK_DIR = OUT_DIR / source_work_id
++        WORK_DIR.mkdir(parents=True, exist_ok=True)
++        command = [
++            sys.executable,
++            str(PROJECT_ROOT / "scripts" / "build_output_contract.py"),
++            "--profiles",
++            str(source),
++            "--output",
++            str(RESULT_FILE),
++            "--report",
++            str(WORK_DIR / "source-contract-report.json"),
++        ]
++        try:
++            completed = subprocess.run(command, cwd=PROJECT_ROOT, capture_output=True, text=True)
++            if completed.returncode != 0:
++                if completed.stderr:
++                    print(completed.stderr, file=sys.stderr, end="")
++                return completed.returncode
++            produced = sum(1 for line in RESULT_FILE.read_text(encoding="utf-8").splitlines() if line.strip())
++            expected = sum(1 for line in source.read_text(encoding="utf-8").splitlines() if line.strip())
++            print(f"Converted {produced}/{expected} envelopes to {RESULT_FILE}.")
++            return 0 if produced == expected else 1
++        finally:
++            if args.fresh and 'preserved_source' in locals() and preserved_source is not None:
++                preserved_source.unlink(missing_ok=True)
++
++    organisations = args.organisations
++    if not organisations.is_absolute():
++        organisations = PROJECT_ROOT / organisations
++    if not organisations.exists():
++        parser.error(f"Organisation file not found: {organisations}")
++
++    try:
++        expected_count = count_organisations(organisations)
++        input_sha256 = sha256_file(organisations)
++    except (OSError, ValueError) as exc:
++        parser.error(f"Invalid organisation input {organisations}: {exc}")
++    if expected_count == 0:
++        parser.error("Organisation file contains no organisation numbers")
++    if args.progress_interval <= 0:
++        parser.error("--progress-interval must be positive")
++
++    if args.fresh:
++        try:
++            organisations.resolve().relative_to(OUT_DIR.resolve())
++        except ValueError:
++            pass
++        else:
++            parser.error("--fresh cannot be used when --organisations is stored inside out/, because out/ is deleted")
++        clear_run_outputs()
++
++    try:
++        run_id = resolve_run_id(args.run_id, fresh=args.fresh)
++    except ValueError as exc:
++        parser.error(str(exc))
++    WORK_DIR = OUT_DIR / run_id
++    hash_path = WORK_DIR / INPUT_HASH_FILE
++    run_dir_already_exists = WORK_DIR.exists()
++    if run_dir_already_exists:
++        if not hash_path.exists():
++            parser.error(
++                f"Run directory {WORK_DIR} has no saved input hash. Use --fresh or choose a new --run-id."
++            )
++        try:
++            saved_hash = hash_path.read_text(encoding="utf-8").strip()
++        except OSError as exc:
++            parser.error(f"Could not read saved input hash from {hash_path}: {exc}")
++        if saved_hash != input_sha256:
++            parser.error(
++                f"Input SHA-256 differs from the saved run input for {run_id}. Refusing to mix inputs; use --fresh or a new --run-id."
++            )
++    else:
++        WORK_DIR.mkdir(parents=True, exist_ok=True)
++        atomic_write_text(hash_path, input_sha256 + "\n")
++
++    OUT_DIR.mkdir(parents=True, exist_ok=True)
++    atomic_write_text(LATEST_RUN_ID_FILE, run_id + "\n")
++
++    command = [
++        sys.executable,
++        str(PROJECT_ROOT / "scripts" / "run_agent.py"),
++        "--organisations",
++        str(organisations),
++        "--output-dir",
++        str(WORK_DIR),
++        "--run-id",
++        run_id,
++        "--expected-count",
++        str(expected_count),
++    ]
++    if not args.skip_workforce_ocr:
++        command.append("--include-workforce-ocr")
++    if not args.skip_deep_crawl:
++        command.append("--include-deep-crawl")
++
++    return_code, progress, elapsed = run_with_progress(
++        command,
++        expected_count=expected_count,
++        progress_interval=args.progress_interval,
++    )
++    source = WORK_DIR / "envelopes.jsonl"
++    envelopes_produced = source.exists()
++    produced_envelope_count = 0
++    if envelopes_produced:
++        try:
++            produced_envelope_count = sum(1 for line in source.read_text(encoding="utf-8").splitlines() if line.strip())
++        except OSError:
++            produced_envelope_count = 0
++    if return_code != 0 and envelopes_produced and produced_envelope_count >= expected_count:
++        print(
++            f"[{datetime.now().strftime('%H:%M:%S')}] NOTICE | RETURN-CODE OVERRIDE: subprocess exited "
++            f"with code {return_code}, but {produced_envelope_count}/{expected_count} envelopes exist; "
++            "treating the run as completed-with-failures.",
++            file=sys.stderr,
++            flush=True,
++        )
++        return_code = 0
++    if return_code != 0:
++        print_final_summary(success=False, expected_count=expected_count, state=progress, elapsed=elapsed, return_code=return_code)
++        if source.exists():
++            produced_envelope_count = sum(1 for line in source.read_text(encoding="utf-8").splitlines() if line.strip())
++            print(
++                f"Run reported failure but {produced_envelope_count} envelopes exist at {source}. "
++                f"Intermediate files kept in {WORK_DIR}",
++                file=sys.stderr,
++            )
++            if produced_envelope_count:
++                atomic_copy_file(source, RESULT_FILE)
++                print(f"Partial envelope output preserved at {RESULT_FILE}", file=sys.stderr)
++        else:
++            print(f"Run failed. Intermediate files were kept in {WORK_DIR}", file=sys.stderr)
++        return return_code
++
++    if not envelopes_produced:
++        print(f"Run finished but envelope file was not created: {source}", file=sys.stderr)
++        return 1
++    atomic_copy_file(source, RESULT_FILE)
++    print_final_summary(success=True, expected_count=expected_count, state=progress, elapsed=elapsed, return_code=0)
++    if produced_envelope_count != expected_count:
++        print(
++            f"[{datetime.now().strftime('%H:%M:%S')}] WARNING | envelope count mismatch "
++            f"({produced_envelope_count} vs expected {expected_count}); copied to result anyway.",
++            file=sys.stderr,
++        )
++    print(f"Final output: {RESULT_FILE}")
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+--- a/scripts/run_competition_batch.py
++++ b/scripts/run_competition_batch.py
+@@ -1,433 +1,612 @@
+-#!/usr/bin/env python3
+-from __future__ import annotations
+-
+-import argparse
+-import concurrent.futures
+-import json
+-import os
+-import sys
+-import threading
+-import time
+-import uuid
+-from datetime import datetime
+-from pathlib import Path
+-
+-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+-sys.path.insert(0, str(PROJECT_ROOT / "src"))
+-
+-from norway_company_agent.batch import (  # noqa: E402
+-    backfill_from_registry_live,
+-    profiles_from_inputs,
+-    read_organisation_inputs,
+-    terminal_envelope,
+-)
+-from norway_company_agent.identity import apply_website_identity_gate  # noqa: E402
+-from norway_company_agent.official import (  # noqa: E402
+-    accounting_obligation_assessment,
+-    extract_annual_report_workforce,
+-    fetch_google_news_mentions,
+-    fetch_official_modules,
+-)
+-from norway_company_agent.website import fetch_website  # noqa: E402
+-
+-
+-class ProgressTracker:
+-    def __init__(self, path: Path, total: int):
+-        self.path = path
+-        self.lock = threading.Lock()
+-        now = time.time()
+-        self.state = {
+-            "total": total,
+-            "started": 0,
+-            "completed": 0,
+-            "successful": 0,
+-            "failed": 0,
+-            "active": 0,
+-            "last_company": None,
+-            "last_completed_company": None,
+-            "last_progress_at": now,
+-            "root_error": None,
+-            "failed_orgs": [],
+-            "total_retries": 0,
+-        }
+-        self._write_locked()
+-
+-    def _write_locked(self) -> None:
+-        self.path.parent.mkdir(parents=True, exist_ok=True)
+-        for attempt in range(10):
+-            temporary = self.path.with_name(f"{self.path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+-            try:
+-                temporary.write_text(json.dumps(self.state, ensure_ascii=False), encoding="utf-8")
+-                os.replace(temporary, self.path)
+-                return
+-            except PermissionError:
+-                try:
+-                    temporary.unlink(missing_ok=True)
+-                except OSError:
+-                    pass
+-                time.sleep(0.05 * (attempt + 1))
+-            except OSError:
+-                try:
+-                    temporary.unlink(missing_ok=True)
+-                except OSError:
+-                    pass
+-                time.sleep(0.05 * (attempt + 1))
+-        raise OSError(f"Could not write progress state to {self.path}")
+-
+-    def started_company(self, organisation_number: str) -> None:
+-        with self.lock:
+-            self.state["started"] += 1
+-            self.state["active"] += 1
+-            self.state["last_company"] = organisation_number
+-            self._write_locked()
+-
+-    def add_retries(self, count: int) -> None:
+-        if count <= 0:
+-            return
+-        with self.lock:
+-            self.state["total_retries"] = int(self.state.get("total_retries") or 0) + count
+-            self._write_locked()
+-
+-    def finished_company(self, organisation_number: str, error: Exception | None = None) -> None:
+-        with self.lock:
+-            self.state["completed"] += 1
+-            self.state["active"] = max(0, self.state["active"] - 1)
+-            self.state["last_company"] = organisation_number
+-            self.state["last_completed_company"] = organisation_number
+-            self.state["last_progress_at"] = time.time()
+-            if error is None:
+-                self.state["successful"] += 1
+-            else:
+-                self.state["failed"] += 1
+-                failed_orgs = self.state.get("failed_orgs") or []
+-                failed_orgs.append(organisation_number)
+-                self.state["failed_orgs"] = failed_orgs
+-                if self.state["root_error"] is None:
+-                    self.state["root_error"] = f"{type(error).__name__}: {error}"
+-            self._write_locked()
+-
+-
+-class CompanyTimingTracker:
+-    def __init__(self):
+-        self.lock = threading.Lock()
+-        self.records: list[tuple[str, float]] = []
+-
+-    def record(self, organisation_number: str, duration: float) -> None:
+-        with self.lock:
+-            self.records.append((organisation_number, duration))
+-
+-    def print_summary(self) -> None:
+-        with self.lock:
+-            records = list(self.records)
+-        if not records:
+-            print("AVERAGE company time: 0.0 sec", flush=True)
+-            print("FASTEST company: n/a | 0.0 sec", flush=True)
+-            print("SLOWEST company: n/a | 0.0 sec", flush=True)
+-            return
+-
+-        average = sum(duration for _, duration in records) / len(records)
+-        fastest = min(records, key=lambda record: record[1])
+-        slowest = max(records, key=lambda record: record[1])
+-        print(f"AVERAGE company time: {average:.1f} sec", flush=True)
+-        print(f"FASTEST company: {fastest[0]} | {fastest[1]:.1f} sec", flush=True)
+-        print(f"SLOWEST company: {slowest[0]} | {slowest[1]:.1f} sec", flush=True)
+-
+-
+-def _build_failure_profile(organisation_number: str, modules: set[str], error_message: str) -> dict:
+-    """Build a minimal but valid profile when collection crashed entirely."""
+-    from norway_company_agent.evidence import evidence as _evidence
+-    from norway_company_agent.batch import profiles_from_inputs
+-    base = profiles_from_inputs([{"organisation_number": organisation_number}])[0]
+-    base["_batch_state"] = "failed"
+-    base["_batch_error"] = error_message[:500] if error_message else "collection_exception"
+-    ev = base.setdefault("evidence", {})
+-    # Ensure every requested module has a terminal evidence record
+-    module_source_map = {
+-        "registry_live": "official_registry_live",
+-        "financials": "official_annual_accounts",
+-        "financial_history": "official_annual_account_copies",
+-        "roles": "official_roles",
+-        "group": "official_group_structure",
+-        "locations": "official_subunits",
+-        "accounting_obligation": "official_rule_interpretation",
+-        "workforce": "official_annual_account_copy",
+-        "google_news": "google_news_rss",
+-        "website": "registry_linked_company_website",
+-        "registry": "official_registry_live",
+-    }
+-    for mod in modules:
+-        if mod in ev:
+-            continue
+-        src = module_source_map.get(mod, "source_error_fallback")
+-        note = error_message[:300] if error_message else "collection_exception"
+-        ev[mod] = _evidence(
+-            mod, "source_error", src,
+-            "https://data.brreg.no/enhetsregisteret/api/enheter/" + organisation_number,
+-            note=f"collect_profile crashed: {note}",
+-            source_row_key=organisation_number,
+-        )
+-    # Mark the registry hint record too so terminal_envelope sees terminal states
+-    if "registry" not in ev:
+-        ev["registry"] = _evidence(
+-            "registry", "source_error", "official_registry_live",
+-            "https://data.brreg.no/enhetsregisteret/api/enheter/" + organisation_number,
+-            note="collection crashed before registry fetch",
+-            source_row_key=organisation_number,
+-        )
+-    return base
+-
+-
+-def collect_profile(
+-    profile: dict,
+-    modules: set[str],
+-    progress: ProgressTracker | None = None,
+-    timings: CompanyTimingTracker | None = None,
+-) -> dict:
+-    organisation_number = str(profile["organisation_number"])
+-    if progress:
+-        progress.started_company(organisation_number)
+-    started = time.perf_counter()
+-    print(f"[{datetime.now().strftime('%H:%M:%S')}] START company {organisation_number}", flush=True)
+-    try:
+-        evidence = profile.setdefault("evidence", {})
+-        official_modules = modules & {"registry_live", "financials", "financial_history", "roles", "group", "locations"}
+-        if official_modules:
+-            evidence.update(fetch_official_modules(organisation_number, official_modules)[0])
+-        backfill_from_registry_live(profile)
+-        if "accounting_obligation" in modules:
+-            evidence["accounting_obligation"] = accounting_obligation_assessment(profile)
+-        if "workforce" in modules:
+-            evidence["workforce"] = extract_annual_report_workforce(profile)
+-        if "google_news" in modules:
+-            evidence["google_news"] = fetch_google_news_mentions(profile)
+-        if "website" in modules:
+-            website_record, _ = fetch_website(profile.get("website"), organisation_number=organisation_number)
+-            gated = apply_website_identity_gate(profile, website_record)
+-            evidence["website"] = gated["website"]
+-        profile["_batch_state"] = "ok"
+-        if progress:
+-            progress.finished_company(organisation_number)
+-        duration = time.perf_counter() - started
+-        print(
+-            f"[{datetime.now().strftime('%H:%M:%S')}] END company {organisation_number} | {duration:.1f} sec | SUCCESS",
+-            flush=True,
+-        )
+-        if timings:
+-            timings.record(organisation_number, duration)
+-        return profile
+-    except Exception as exc:
+-        duration = time.perf_counter() - started
+-        error = f"{type(exc).__name__}: {exc}".replace("\r", " ").replace("\n", " ")
+-        print(
+-            f"[{datetime.now().strftime('%H:%M:%S')}] END company {organisation_number} | {duration:.1f} sec | FAILED | {error}",
+-            flush=True,
+-        )
+-        if timings:
+-            timings.record(organisation_number, duration)
+-        if progress:
+-            progress.finished_company(organisation_number, exc)
+-        profile["_batch_state"] = "failed"
+-        profile["_batch_error"] = error[:500]
+-        # Build out missing evidence modules so terminal_envelope produces a valid (failed) envelope
+-        from norway_company_agent.evidence import evidence as _evidence
+-        ev = profile.setdefault("evidence", {})
+-        module_source_map = {
+-            "registry_live": "official_registry_live",
+-            "financials": "official_annual_accounts",
+-            "financial_history": "official_annual_account_copies",
+-            "roles": "official_roles",
+-            "group": "official_group_structure",
+-            "locations": "official_subunits",
+-            "accounting_obligation": "official_rule_interpretation",
+-            "workforce": "official_annual_account_copy",
+-            "google_news": "google_news_rss",
+-            "website": "registry_linked_company_website",
+-            "registry": "official_registry_live",
+-        }
+-        for mod in modules:
+-            if mod in ev:
+-                continue
+-            src = module_source_map.get(mod, "source_error_fallback")
+-            ev[mod] = _evidence(
+-                mod, "source_error", src,
+-                "https://data.brreg.no/enhetsregisteret/api/enheter/" + organisation_number,
+-                note=f"exception: {error[:240]}",
+-                source_row_key=organisation_number,
+-            )
+-        if "registry" not in ev:
+-            ev["registry"] = _evidence(
+-                "registry", "source_error", "official_registry_live",
+-                "https://data.brreg.no/enhetsregisteret/api/enheter/" + organisation_number,
+-                note="collection_exception",
+-                source_row_key=organisation_number,
+-            )
+-        return profile
+-
+-
+-def main() -> int:
+-    p = argparse.ArgumentParser(description="Minimal registry batch for V1 submission")
+-    p.add_argument("--organisations", required=True)
+-    p.add_argument("--profiles-output", required=True)
+-    p.add_argument("--output", required=True)
+-    p.add_argument("--report", required=True)
+-    p.add_argument("--run-id", default="run-v1")
+-    p.add_argument("--expected-count", type=int, default=0)
+-    p.add_argument("--progress-file", type=Path)
+-    p.add_argument("--modules", default="registry")
+-    args = p.parse_args()
+-
+-    org_file = Path(args.organisations)
+-    try:
+-        organisation_records = read_organisation_inputs(org_file)
+-    except (OSError, ValueError) as exc:
+-        p.error(f"Invalid organisation input {org_file}: {exc}")
+-    if not organisation_records:
+-        p.error(f"Organisation input contains no organisation numbers: {org_file}")
+-    profiles = profiles_from_inputs(organisation_records)
+-    modules = {module.strip() for module in args.modules.split(",") if module.strip()}
+-    progress = ProgressTracker(args.progress_file, len(profiles)) if args.progress_file else None
+-    timings = CompanyTimingTracker()
+-
+-    collected: list[dict] = []
+-    try:
+-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(12, max(1, len(profiles)))) as executor:
+-            futures = [executor.submit(collect_profile, profile, modules, progress, timings) for profile in profiles]
+-            for profile, future in zip(profiles, futures):
+-                org = str(profile["organisation_number"])
+-                try:
+-                    collected.append(future.result())
+-                except Exception as exc:
+-                    error = f"{type(exc).__name__}: {exc}".replace("\r", " ").replace("\n", " ")
+-                    print(
+-                        f"[{datetime.now().strftime('%H:%M:%S')}] WORKER CRASH company {org} | {error}",
+-                        flush=True,
+-                    )
+-                    if timings:
+-                        timings.record(org, 0.0)
+-                    if progress:
+-                        progress.finished_company(org, exc)
+-                    recovered = _build_failure_profile(org, modules, error)
+-                    collected.append(recovered)
+-    finally:
+-        timings.print_summary()
+-
+-    # Count retries from the request log if available
+-    total_retries = 0
+-    try:
+-        request_log = Path(os.environ.get("SIGNALPOST_REQUEST_LOG", ""))
+-        if request_log.exists():
+-            lines = request_log.read_text(encoding="utf-8").splitlines()
+-            for line in lines:
+-                if not line.strip():
+-                    continue
+-                try:
+-                    evt = json.loads(line)
+-                    if evt.get("retry") and evt.get("success") is not False:
+-                        total_retries += 1
+-                except Exception:
+-                    pass
+-    except Exception:
+-        pass
+-    if progress:
+-        progress.add_retries(total_retries)
+-
+-    Path(args.profiles_output).parent.mkdir(parents=True, exist_ok=True)
+-    with open(args.profiles_output, "w", encoding="utf-8") as handle:
+-        for row in collected:
+-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+-
+-    envelope_rows = [
+-        terminal_envelope(
+-            row,
+-            run_id=args.run_id,
+-            modules=row.get("evidence", {}).keys(),
+-            started_at="",
+-            completed_at="",
+-        )
+-        for row in collected
+-    ]
+-
+-    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+-    with open(args.output, "w", encoding="utf-8") as handle:
+-        for row in envelope_rows:
+-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+-
+-    # Compute failed orgs via profile _batch_state (authoritative: pipeline crashed vs completed cleanly)
+-    expected = args.expected_count or len(collected)
+-    successful = sum(1 for row in collected if row.get("_batch_state", "ok") != "failed")
+-    failed_count = len(collected) - successful
+-    failed_orgs = sorted({
+-        str(row.get("organisation_number", ""))
+-        for row in collected
+-        if row.get("_batch_state") == "failed"
+-    })
+-    if not failed_orgs:
+-        # Fallback: also count envelopes where every module is source_error (indicates data didn't load)
+-        env_failed = []
+-        for env in envelope_rows:
+-            module_states = list((env.get("modules") or {}).values())
+-            if module_states and all(item.get("state") == "source_error" for item in module_states):
+-                org = str(env.get("organisation_number", ""))
+-                if org and org not in env_failed:
+-                    env_failed.append(org)
+-        failed_orgs = sorted(set(env_failed))
+-        failed_count = len(failed_orgs)
+-        successful = len(collected) - failed_count
+-
+-    identity_decisions: dict[str, int] = {}
+-    for row in collected:
+-        website_value = (((row.get("evidence") or {}).get("website") or {}).get("value") or {})
+-        assessment = website_value.get("identity_assessment") if isinstance(website_value, dict) else None
+-        decision = str((assessment or {}).get("decision") or "")
+-        if decision:
+-            identity_decisions[decision] = identity_decisions.get(decision, 0) + 1
+-
+-    # Concise failure summary print
+-    print("", flush=True)
+-    print("=" * 60, flush=True)
+-    print("BATCH FAILURE SUMMARY", flush=True)
+-    print("=" * 60, flush=True)
+-    print(f"  Total companies   : {len(collected)}/{expected}", flush=True)
+-    print(f"  Successful        : {successful}", flush=True)
+-    print(f"  Failed            : {failed_count}", flush=True)
+-    print(f"  Total retries     : {total_retries}", flush=True)
+-    if failed_orgs:
+-        preview = ", ".join(failed_orgs[:20])
+-        extra = "" if len(failed_orgs) <= 20 else f" (+{len(failed_orgs) - 20} more)"
+-        print(f"  Failed orgs       : {preview}{extra}", flush=True)
+-    if progress and not failed_orgs:
+-        progress_failed = progress.state.get("failed") or 0
+-        if progress_failed:
+-            print(f"  (progress-tracker failed: {progress_failed}; envelopes still marked complete)", flush=True)
+-    print("=" * 60, flush=True)
+-    print("", flush=True)
+-
+-    report = {
+-        "run_id": args.run_id,
+-        "expected_count": expected,
+-        "profiles_written": len(collected),
+-        "envelopes_written": len(envelope_rows),
+-        "modules": sorted(modules),
+-        "status": "ok" if len(collected) == expected else "partial",
+-        "successful": successful,
+-        "failed": failed_count,
+-        "failed_orgs": failed_orgs,
+-        "total_retries": total_retries,
+-        "identity_decisions": identity_decisions,
+-        "validation": {
+-            "website_values_accepted": sum(
+-                1 for row in collected
+-                if ((row.get("evidence") or {}).get("website") or {}).get("status") == "available"
+-            ),
+-            "website_values_rejected": sum(
+-                1 for row in collected
+-                if "schema validation" in str((((row.get("evidence") or {}).get("website") or {}).get("note") or "")).casefold()
+-            ),
+-        },
+-    }
+-    Path(args.report).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+-    return 0
+-
+-
+-if __name__ == "__main__":
+-    raise SystemExit(main())
++#!/usr/bin/env python3
++from __future__ import annotations
++
++import argparse
++import concurrent.futures
++import json
++import os
++import sys
++import threading
++import time
++import uuid
++from datetime import datetime
++from pathlib import Path
++
++PROJECT_ROOT = Path(__file__).resolve().parent.parent
++sys.path.insert(0, str(PROJECT_ROOT / "src"))
++
++from norway_company_agent.batch import (  # noqa: E402
++    backfill_from_registry_live,
++    profiles_from_inputs,
++    read_organisation_inputs,
++    terminal_envelope,
++)
++from norway_company_agent.identity import apply_website_identity_gate  # noqa: E402
++from norway_company_agent.official import (  # noqa: E402
++    accounting_obligation_assessment,
++    extract_annual_report_workforce,
++    fetch_google_news_mentions,
++    fetch_official_modules,
++)
++from norway_company_agent.website import fetch_website  # noqa: E402
++
++
++class ProgressTracker:
++    def __init__(self, path: Path, total: int, already_completed: list[dict] | None = None):
++        self.path = path
++        self.lock = threading.Lock()
++        now = time.time()
++        existing = already_completed or []
++        failed_orgs = [
++            str(row.get("organisation_number", ""))
++            for row in existing if row.get("_batch_state") == "failed"
++        ]
++        last_org = str(existing[-1].get("organisation_number")) if existing else None
++        self.state = {
++            "total": total,
++            "started": len(existing),
++            "completed": len(existing),
++            "successful": len(existing) - len(failed_orgs),
++            "failed": len(failed_orgs),
++            "active": 0,
++            "last_company": last_org,
++            "last_completed_company": last_org,
++            "last_progress_at": now,
++            "root_error": None,
++            "failed_orgs": failed_orgs,
++            "total_retries": 0,
++        }
++        self._write_locked()
++
++    def _write_locked(self) -> None:
++        self.path.parent.mkdir(parents=True, exist_ok=True)
++        for attempt in range(10):
++            temporary = self.path.with_name(f"{self.path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
++            try:
++                temporary.write_text(json.dumps(self.state, ensure_ascii=False), encoding="utf-8")
++                os.replace(temporary, self.path)
++                return
++            except PermissionError:
++                try:
++                    temporary.unlink(missing_ok=True)
++                except OSError:
++                    pass
++                time.sleep(0.05 * (attempt + 1))
++            except OSError:
++                try:
++                    temporary.unlink(missing_ok=True)
++                except OSError:
++                    pass
++                time.sleep(0.05 * (attempt + 1))
++        raise OSError(f"Could not write progress state to {self.path}")
++
++    def started_company(self, organisation_number: str) -> None:
++        with self.lock:
++            self.state["started"] += 1
++            self.state["active"] += 1
++            self.state["last_company"] = organisation_number
++            self._write_locked()
++
++    def add_retries(self, count: int) -> None:
++        if count <= 0:
++            return
++        with self.lock:
++            self.state["total_retries"] = int(self.state.get("total_retries") or 0) + count
++            self._write_locked()
++
++    def finished_company(self, organisation_number: str, error: Exception | None = None) -> None:
++        with self.lock:
++            self.state["completed"] += 1
++            self.state["active"] = max(0, self.state["active"] - 1)
++            self.state["last_company"] = organisation_number
++            self.state["last_completed_company"] = organisation_number
++            self.state["last_progress_at"] = time.time()
++            if error is None:
++                self.state["successful"] += 1
++            else:
++                self.state["failed"] += 1
++                failed_orgs = self.state.get("failed_orgs") or []
++                failed_orgs.append(organisation_number)
++                self.state["failed_orgs"] = failed_orgs
++                if self.state["root_error"] is None:
++                    self.state["root_error"] = f"{type(error).__name__}: {error}"
++            self._write_locked()
++
++
++class CompanyTimingTracker:
++    def __init__(self):
++        self.lock = threading.Lock()
++        self.records: list[tuple[str, float]] = []
++
++    def record(self, organisation_number: str, duration: float) -> None:
++        with self.lock:
++            self.records.append((organisation_number, duration))
++
++    def print_summary(self) -> None:
++        with self.lock:
++            records = list(self.records)
++        if not records:
++            print("AVERAGE company time: 0.0 sec", flush=True)
++            print("FASTEST company: n/a | 0.0 sec", flush=True)
++            print("SLOWEST company: n/a | 0.0 sec", flush=True)
++            return
++
++        average = sum(duration for _, duration in records) / len(records)
++        fastest = min(records, key=lambda record: record[1])
++        slowest = max(records, key=lambda record: record[1])
++        print(f"AVERAGE company time: {average:.1f} sec", flush=True)
++        print(f"FASTEST company: {fastest[0]} | {fastest[1]:.1f} sec", flush=True)
++        print(f"SLOWEST company: {slowest[0]} | {slowest[1]:.1f} sec", flush=True)
++
++
++class ProfileCheckpoint:
++    """Append-only, fsync-backed checkpoint for each completed company."""
++
++    def __init__(self, path: Path):
++        self.path = path
++        self.lock = threading.Lock()
++        self.path.parent.mkdir(parents=True, exist_ok=True)
++
++    def append(self, profile: dict) -> None:
++        line = json.dumps(profile, ensure_ascii=False, separators=(",", ":")) + "\n"
++        with self.lock:
++            with self.path.open("a", encoding="utf-8", newline="") as handle:
++                handle.write(line)
++                handle.flush()
++                os.fsync(handle.fileno())
++
++
++def read_profile_checkpoint(path: Path) -> dict[str, dict]:
++    """Read complete JSONL records only; ignore an unterminated final line."""
++    if not path.exists():
++        return {}
++    try:
++        raw = path.read_bytes()
++    except OSError as exc:
++        raise OSError(f"Could not read checkpoint file {path}: {exc}") from exc
++    if raw and not raw.endswith(b"\n"):
++        last_newline = raw.rfind(b"\n")
++        complete_length = last_newline + 1
++        try:
++            with path.open("r+b") as handle:
++                handle.truncate(complete_length)
++                handle.flush()
++                os.fsync(handle.fileno())
++        except OSError as exc:
++            raise OSError(f"Could not truncate incomplete checkpoint tail in {path}: {exc}") from exc
++        raw = raw[:complete_length]
++    checkpoint_rows: dict[str, dict] = {}
++    for line in raw.splitlines(keepends=True):
++        if not line.endswith(b"\n"):
++            continue
++        try:
++            row = json.loads(line.decode("utf-8"))
++        except (UnicodeDecodeError, json.JSONDecodeError):
++            continue
++        if not isinstance(row, dict) or not row.get("organisation_number"):
++            continue
++        checkpoint_rows[str(row["organisation_number"])] = row
++    return checkpoint_rows
++
++
++def atomic_write_jsonl(path: Path, rows: list[dict]) -> None:
++    path.parent.mkdir(parents=True, exist_ok=True)
++    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
++    try:
++        with temporary.open("w", encoding="utf-8", newline="") as handle:
++            for row in rows:
++                handle.write(json.dumps(row, ensure_ascii=False) + "\n")
++            handle.flush()
++            os.fsync(handle.fileno())
++        os.replace(temporary, path)
++    finally:
++        temporary.unlink(missing_ok=True)
++
++
++def retry_one_module(profile: dict, module: str) -> dict | None:
++    """Re-fetch one module without rerunning all other module work."""
++    org = str(profile["organisation_number"])
++    if module in {"registry_live", "financials", "financial_history", "roles", "group", "locations"}:
++        records, _ = fetch_official_modules(org, {module})
++        return records.get(module)
++    if module == "website":
++        website_record, _ = fetch_website(profile.get("website"), organisation_number=org)
++        return apply_website_identity_gate(profile, website_record)["website"]
++    if module == "accounting_obligation":
++        return accounting_obligation_assessment(profile)
++    if module == "workforce":
++        return extract_annual_report_workforce(profile)
++    if module == "google_news":
++        return fetch_google_news_mentions(profile)
++    return None
++
++
++def retry_source_error_modules(profile: dict, modules: set[str], *, max_retries: int = 2) -> None:
++    """Retry source_error modules at most twice, with exponential backoff."""
++    ev = profile.setdefault("evidence", {})
++    retryable = [
++        module for module in modules
++        if isinstance(ev.get(module), dict) and ev[module].get("status") == "source_error"
++    ]
++    for module in retryable:
++        record = ev.get(module) or {}
++        retries = int(record.get("retry_count") or 0)
++        for attempt in range(1, max_retries + 1):
++            time.sleep(min(2.0, 0.5 * (2 ** (attempt - 1))))
++            try:
++                refreshed = retry_one_module(profile, module)
++            except Exception as exc:
++                refreshed = None
++                retry_error = f"{type(exc).__name__}: {str(exc)[:180]}"
++            else:
++                retry_error = ""
++            retries += 1
++            if isinstance(refreshed, dict):
++                refreshed["retry_count"] = retries
++                ev[module] = refreshed
++                record = refreshed
++                if module == "registry_live":
++                    backfill_from_registry_live(profile)
++                if refreshed.get("status") != "source_error":
++                    print(
++                        f"RETRY RECOVERED company {profile['organisation_number']} module {module} "
++                        f"after {retries} retry(s)", flush=True,
++                    )
++                    break
++            else:
++                record = dict(record)
++                record["retry_count"] = retries
++                if retry_error:
++                    record["note"] = f"{record.get('note') or ''}; retry {retries}: {retry_error}".strip("; ")[:500]
++                ev[module] = record
++        else:
++            ev[module] = record
++        ev[module]["retry_count"] = retries
++
++    if profile.get("_batch_state") == "failed":
++        unresolved = any(
++            isinstance(ev.get(module), dict) and ev[module].get("status") == "source_error"
++            for module in modules
++        )
++        if not unresolved:
++            profile["_batch_state"] = "ok"
++            profile.pop("_batch_error", None)
++
++
++def _build_failure_profile(organisation_number: str, modules: set[str], error_message: str) -> dict:
++    """Build a minimal but valid profile when collection crashed entirely."""
++    from norway_company_agent.evidence import evidence as _evidence
++    from norway_company_agent.batch import profiles_from_inputs
++    base = profiles_from_inputs([{"organisation_number": organisation_number}])[0]
++    base["_batch_state"] = "failed"
++    base["_batch_error"] = error_message[:500] if error_message else "collection_exception"
++    ev = base.setdefault("evidence", {})
++    # Ensure every requested module has a terminal evidence record
++    module_source_map = {
++        "registry_live": "official_registry_live",
++        "financials": "official_annual_accounts",
++        "financial_history": "official_annual_account_copies",
++        "roles": "official_roles",
++        "group": "official_group_structure",
++        "locations": "official_subunits",
++        "accounting_obligation": "official_rule_interpretation",
++        "workforce": "official_annual_account_copy",
++        "google_news": "google_news_rss",
++        "website": "registry_linked_company_website",
++        "registry": "official_registry_live",
++    }
++    for mod in modules:
++        if mod in ev:
++            continue
++        src = module_source_map.get(mod, "source_error_fallback")
++        note = error_message[:300] if error_message else "collection_exception"
++        ev[mod] = _evidence(
++            mod, "source_error", src,
++            "https://data.brreg.no/enhetsregisteret/api/enheter/" + organisation_number,
++            note=f"collect_profile crashed: {note}",
++            source_row_key=organisation_number,
++        )
++    # Mark the registry hint record too so terminal_envelope sees terminal states
++    if "registry" not in ev:
++        ev["registry"] = _evidence(
++            "registry", "source_error", "official_registry_live",
++            "https://data.brreg.no/enhetsregisteret/api/enheter/" + organisation_number,
++            note="collection crashed before registry fetch",
++            source_row_key=organisation_number,
++        )
++    return base
++
++
++def collect_profile(
++    profile: dict,
++    modules: set[str],
++    progress: ProgressTracker | None = None,
++    timings: CompanyTimingTracker | None = None,
++) -> dict:
++    organisation_number = str(profile["organisation_number"])
++    if progress:
++        progress.started_company(organisation_number)
++    started = time.perf_counter()
++    print(f"[{datetime.now().strftime('%H:%M:%S')}] START company {organisation_number}", flush=True)
++    try:
++        evidence = profile.setdefault("evidence", {})
++        official_modules = modules & {"registry_live", "financials", "financial_history", "roles", "group", "locations"}
++        if official_modules:
++            evidence.update(fetch_official_modules(organisation_number, official_modules)[0])
++        backfill_from_registry_live(profile)
++        if "accounting_obligation" in modules:
++            evidence["accounting_obligation"] = accounting_obligation_assessment(profile)
++        if "workforce" in modules:
++            evidence["workforce"] = extract_annual_report_workforce(profile)
++        if "google_news" in modules:
++            evidence["google_news"] = fetch_google_news_mentions(profile)
++        if "website" in modules:
++            website_record, _ = fetch_website(profile.get("website"), organisation_number=organisation_number)
++            gated = apply_website_identity_gate(profile, website_record)
++            evidence["website"] = gated["website"]
++        retry_source_error_modules(profile, modules)
++        if profile.get("_batch_state") != "failed":
++            profile["_batch_state"] = "ok"
++        if progress:
++            progress.finished_company(
++                organisation_number,
++                RuntimeError(profile.get("_batch_error") or "one or more modules remain in source_error")
++                if profile.get("_batch_state") == "failed" else None,
++            )
++        duration = time.perf_counter() - started
++        print(
++            f"[{datetime.now().strftime('%H:%M:%S')}] END company {organisation_number} | {duration:.1f} sec | SUCCESS",
++            flush=True,
++        )
++        if timings:
++            timings.record(organisation_number, duration)
++        return profile
++    except Exception as exc:
++        duration = time.perf_counter() - started
++        error = f"{type(exc).__name__}: {exc}".replace("\r", " ").replace("\n", " ")
++        print(
++            f"[{datetime.now().strftime('%H:%M:%S')}] END company {organisation_number} | {duration:.1f} sec | FAILED | {error}",
++            flush=True,
++        )
++        if timings:
++            timings.record(organisation_number, duration)
++        profile["_batch_state"] = "failed"
++        profile["_batch_error"] = error[:500]
++        # Build out missing evidence modules so terminal_envelope produces a valid (failed) envelope
++        from norway_company_agent.evidence import evidence as _evidence
++        ev = profile.setdefault("evidence", {})
++        module_source_map = {
++            "registry_live": "official_registry_live",
++            "financials": "official_annual_accounts",
++            "financial_history": "official_annual_account_copies",
++            "roles": "official_roles",
++            "group": "official_group_structure",
++            "locations": "official_subunits",
++            "accounting_obligation": "official_rule_interpretation",
++            "workforce": "official_annual_account_copy",
++            "google_news": "google_news_rss",
++            "website": "registry_linked_company_website",
++            "registry": "official_registry_live",
++        }
++        for mod in modules:
++            if mod in ev:
++                continue
++            src = module_source_map.get(mod, "source_error_fallback")
++            ev[mod] = _evidence(
++                mod, "source_error", src,
++                "https://data.brreg.no/enhetsregisteret/api/enheter/" + organisation_number,
++                note=f"exception: {error[:240]}",
++                source_row_key=organisation_number,
++            )
++        if "registry" not in ev:
++            ev["registry"] = _evidence(
++                "registry", "source_error", "official_registry_live",
++                "https://data.brreg.no/enhetsregisteret/api/enheter/" + organisation_number,
++                note="collection_exception",
++                source_row_key=organisation_number,
++            )
++        retry_source_error_modules(profile, modules)
++        if progress:
++            progress.finished_company(
++                organisation_number,
++                RuntimeError(profile.get("_batch_error") or "one or more modules remain in source_error")
++                if profile.get("_batch_state") == "failed" else None,
++            )
++        return profile
++
++
++def main() -> int:
++    p = argparse.ArgumentParser(description="Minimal registry batch for V1 submission")
++    p.add_argument("--organisations", required=True)
++    p.add_argument("--profiles-output", required=True)
++    p.add_argument("--output", required=True)
++    p.add_argument("--report", required=True)
++    p.add_argument("--run-id", default="run-v1")
++    p.add_argument("--expected-count", type=int, default=0)
++    p.add_argument("--progress-file", type=Path)
++    p.add_argument("--modules", default="registry")
++    args = p.parse_args()
++
++    org_file = Path(args.organisations)
++    try:
++        organisation_records = read_organisation_inputs(org_file)
++    except (OSError, ValueError) as exc:
++        p.error(f"Invalid organisation input {org_file}: {exc}")
++    if not organisation_records:
++        p.error(f"Organisation input contains no organisation numbers: {org_file}")
++    profiles = profiles_from_inputs(organisation_records)
++    modules = {module.strip() for module in args.modules.split(",") if module.strip()}
++    checkpoint_path = Path(args.profiles_output).parent / "checkpoint" / "profiles.partial.jsonl"
++    checkpoint = ProfileCheckpoint(checkpoint_path)
++    checkpoint_by_org = read_profile_checkpoint(checkpoint_path)
++    input_orgs = {str(profile["organisation_number"]) for profile in profiles}
++    checkpoint_by_org = {org: row for org, row in checkpoint_by_org.items() if org in input_orgs}
++    if checkpoint_by_org:
++        print(
++            f"CHECKPOINT RESUME | skipping {len(checkpoint_by_org)}/{len(profiles)} completed companies",
++            flush=True,
++        )
++    pending_profiles = [
++        profile for profile in profiles
++        if str(profile["organisation_number"]) not in checkpoint_by_org
++    ]
++    progress = ProgressTracker(
++        args.progress_file,
++        len(profiles),
++        already_completed=list(checkpoint_by_org.values()),
++    ) if args.progress_file else None
++    timings = CompanyTimingTracker()
++
++    def collect_and_checkpoint(profile: dict) -> dict:
++        row = collect_profile(profile, modules, progress, timings)
++        checkpoint.append(row)
++        return row
++
++    try:
++        with concurrent.futures.ThreadPoolExecutor(max_workers=min(12, max(1, len(pending_profiles)))) as executor:
++            future_to_profile = {
++                executor.submit(collect_and_checkpoint, profile): profile
++                for profile in pending_profiles
++            }
++            for future in concurrent.futures.as_completed(future_to_profile):
++                profile = future_to_profile[future]
++                org = str(profile["organisation_number"])
++                try:
++                    row = future.result()
++                except Exception as exc:
++                    error = f"{type(exc).__name__}: {exc}".replace("\r", " ").replace("\n", " ")
++                    print(
++                        f"[{datetime.now().strftime('%H:%M:%S')}] WORKER CRASH company {org} | {error}",
++                        flush=True,
++                    )
++                    if timings:
++                        timings.record(org, 0.0)
++                    recovered = _build_failure_profile(org, modules, error)
++                    if progress:
++                        progress.finished_company(org, exc)
++                    checkpoint.append(recovered)
++                    row = recovered
++                checkpoint_by_org[org] = row
++    finally:
++        timings.print_summary()
++
++    # Rebuild final profiles in exactly the input order; the partial file is append-only.
++    collected = [
++        checkpoint_by_org.get(str(profile["organisation_number"]), profile)
++        for profile in profiles
++    ]
++
++    # Count retries from the request log if available
++    total_retries = 0
++    try:
++        request_log = Path(os.environ.get("SIGNALPOST_REQUEST_LOG", ""))
++        if request_log.exists():
++            lines = request_log.read_text(encoding="utf-8").splitlines()
++            for line in lines:
++                if not line.strip():
++                    continue
++                try:
++                    evt = json.loads(line)
++                    if evt.get("retry") and evt.get("success") is not False:
++                        total_retries += 1
++                except Exception:
++                    pass
++    except Exception:
++        pass
++    if progress:
++        progress.add_retries(total_retries)
++
++    atomic_write_jsonl(Path(args.profiles_output), collected)
++
++    envelope_rows = [
++        terminal_envelope(
++            row,
++            run_id=args.run_id,
++            modules=row.get("evidence", {}).keys(),
++            started_at="",
++            completed_at="",
++        )
++        for row in collected
++    ]
++
++    atomic_write_jsonl(Path(args.output), envelope_rows)
++
++    # Compute failed orgs via profile _batch_state (authoritative: pipeline crashed vs completed cleanly)
++    expected = args.expected_count or len(collected)
++    successful = sum(1 for row in collected if row.get("_batch_state", "ok") != "failed")
++    failed_count = len(collected) - successful
++    failed_orgs = sorted({
++        str(row.get("organisation_number", ""))
++        for row in collected
++        if row.get("_batch_state") == "failed"
++    })
++    if not failed_orgs:
++        # Fallback: also count envelopes where every module is source_error (indicates data didn't load)
++        env_failed = []
++        for env in envelope_rows:
++            module_states = list((env.get("modules") or {}).values())
++            if module_states and all(item.get("state") == "source_error" for item in module_states):
++                org = str(env.get("organisation_number", ""))
++                if org and org not in env_failed:
++                    env_failed.append(org)
++        failed_orgs = sorted(set(env_failed))
++        failed_count = len(failed_orgs)
++        successful = len(collected) - failed_count
++
++    identity_decisions: dict[str, int] = {}
++    for row in collected:
++        website_value = (((row.get("evidence") or {}).get("website") or {}).get("value") or {})
++        assessment = website_value.get("identity_assessment") if isinstance(website_value, dict) else None
++        decision = str((assessment or {}).get("decision") or "")
++        if decision:
++            identity_decisions[decision] = identity_decisions.get(decision, 0) + 1
++
++    # Concise failure summary print
++    print("", flush=True)
++    print("=" * 60, flush=True)
++    print("BATCH FAILURE SUMMARY", flush=True)
++    print("=" * 60, flush=True)
++    print(f"  Total companies   : {len(collected)}/{expected}", flush=True)
++    print(f"  Successful        : {successful}", flush=True)
++    print(f"  Failed            : {failed_count}", flush=True)
++    print(f"  Total retries     : {total_retries}", flush=True)
++    if failed_orgs:
++        preview = ", ".join(failed_orgs[:20])
++        extra = "" if len(failed_orgs) <= 20 else f" (+{len(failed_orgs) - 20} more)"
++        print(f"  Failed orgs       : {preview}{extra}", flush=True)
++    if progress and not failed_orgs:
++        progress_failed = progress.state.get("failed") or 0
++        if progress_failed:
++            print(f"  (progress-tracker failed: {progress_failed}; envelopes still marked complete)", flush=True)
++    print("=" * 60, flush=True)
++    print("", flush=True)
++
++    report = {
++        "run_id": args.run_id,
++        "expected_count": expected,
++        "profiles_written": len(collected),
++        "envelopes_written": len(envelope_rows),
++        "modules": sorted(modules),
++        "status": "ok" if len(collected) == expected else "partial",
++        "successful": successful,
++        "failed": failed_count,
++        "failed_orgs": failed_orgs,
++        "total_retries": total_retries,
++        "identity_decisions": identity_decisions,
++        "validation": {
++            "website_values_accepted": sum(
++                1 for row in collected
++                if ((row.get("evidence") or {}).get("website") or {}).get("status") == "available"
++            ),
++            "website_values_rejected": sum(
++                1 for row in collected
++                if "schema validation" in str((((row.get("evidence") or {}).get("website") or {}).get("note") or "")).casefold()
++            ),
++        },
++    }
++    Path(args.report).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+--- a/scripts/run_agent.py
++++ b/scripts/run_agent.py
+@@ -1,350 +1,473 @@
+-#!/usr/bin/env python3
+-"""Single evaluator entrypoint for the full Signalpost agent pipeline.
+-
+-Chains every stage of the pipeline into one command, as required by the
+-"reproducible setup ... one evaluator command" hard gate:
+-
+-  1. registry batch (identity, financials, financial_history, roles, group,
+-     locations, single-page website fetch) -- required, no optional deps.
+-  2. website discovery (Tavily, then Exa) for companies still missing a site --
+-     runs only if TAVILY_API_KEY / EXA_API_KEY is set (server-side secret, per
+-     the locked evaluator budget's own requirement).
+-  3. deep multi-page site crawl (scrapy) for every company with a website
+-     candidate -- best-effort: skipped cleanly if the `scrapy` package isn't
+-     installed in this environment, rather than failing the whole run.
+-  4. company-owned activity/news extraction from the crawl -- pure-Python,
+-     no optional dependency, always attempted.
+-  5. official annual-report OCR workforce extraction -- best-effort per
+-     company already (see run_annual_report_workforce_connector.py's own
+-     broad except); still guarded here so a totally missing tesseract/poppler
+-     install degrades to "no workforce data" rather than noisy per-company
+-     errors for the whole batch.
+-  6. claims/evidence envelope conversion, folding in every observation file
+-     collected above.
+-
+-Every optional stage is best-effort: a failure is logged and the pipeline
+-moves on rather than losing everything already collected. The registry batch
+-(step 1) and the final conversion (step 6) are the only required stages --
+-without them there is no submission at all.
+-"""
+-from __future__ import annotations
+-
+-import argparse
+-import json
+-import os
+-import shutil
+-import subprocess
+-import sys
+-import time
+-from pathlib import Path
+-
+-ROOT = Path(__file__).resolve().parent
+-PROJECT_ROOT = ROOT.parent
+-ARCHIVE_ROOT = PROJECT_ROOT / "archive" / "v2-crawler"
+-sys.path.insert(0, str(PROJECT_ROOT / "src"))
+-from norway_company_agent.env import load_local_env  # noqa: E402
+-from norway_company_agent.telemetry import aggregate_company_metrics, apply_discovery_report, build_metrics, read_events  # noqa: E402
+-
+-
+-def run(cmd: list[str], *, optional: bool = False) -> bool:
+-    print("+ " + " ".join(cmd), file=sys.stderr)
+-    try:
+-        subprocess.run(cmd, check=True)
+-        return True
+-    except subprocess.CalledProcessError as exc:
+-        if not optional:
+-            raise
+-        print(f"  (optional stage failed, continuing: {exc})", file=sys.stderr)
+-        return False
+-
+-
+-def read_jsonl(path: Path) -> list[dict]:
+-    if not path.exists():
+-        return []
+-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+-
+-
+-def write_jsonl(path: Path, rows: list[dict]) -> None:
+-    path.parent.mkdir(parents=True, exist_ok=True)
+-    with path.open("w", encoding="utf-8") as handle:
+-        for row in rows:
+-            handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+-
+-
+-def merge_profiles(base: list[dict], updated: list[dict], *, only_if_has: str | None = None) -> int:
+-    """Merge updated rows into base by organisation_number. Returns count merged."""
+-    updated_by_org = {row["organisation_number"]: row for row in updated}
+-    merged = 0
+-    for index, row in enumerate(base):
+-        candidate = updated_by_org.get(row["organisation_number"])
+-        if not candidate:
+-            continue
+-        if only_if_has and not (candidate.get("evidence") or {}).get(only_if_has):
+-            continue
+-        base[index] = candidate
+-        merged += 1
+-    return merged
+-
+-
+-def backfill_top_level_website(profiles: list[dict]) -> None:
+-    for row in profiles:
+-        if row.get("website"):
+-            continue
+-        web = row.get("evidence", {}).get("website") or {}
+-        if web.get("status") == "available":
+-            value = web.get("value") or {}
+-            row["website"] = value.get("final_url") or web.get("source_url")
+-
+-
+-def main() -> None:
+-    parser = argparse.ArgumentParser(description="Run the full Signalpost agent end to end.")
+-    parser.add_argument("--organisations", required=True, help="JSONL/JSON/text list of organisation numbers")
+-    parser.add_argument("--output-dir", required=True)
+-    parser.add_argument("--run-id", required=True)
+-    parser.add_argument("--expected-count", type=int, required=True)
+-    parser.add_argument("--overwrite", action="store_true", help="Replace existing output for this run ID")
+-    parser.add_argument("--discovery-limit", type=int, default=None, help="Cap discovery queries; default is expected-count")
+-    parser.add_argument("--skip-deep-crawl", dest="skip_deep_crawl", action="store_true", default=False, help="Skip the scrapy multi-page crawl stage")
+-    parser.add_argument("--include-deep-crawl", dest="skip_deep_crawl", action="store_false", help="Enable the crawler (default)")
+-    parser.add_argument("--skip-workforce-ocr", dest="skip_workforce_ocr", action="store_true", default=True, help="Skip the annual-report OCR workforce stage (default for V1 submission)")
+-    parser.add_argument("--include-workforce-ocr", dest="skip_workforce_ocr", action="store_false", help="Enable annual-report OCR for V2 work")
+-    parser.add_argument("--python", default=sys.executable)
+-    args = parser.parse_args()
+-
+-    load_local_env(PROJECT_ROOT)
+-    output_dir = Path(args.output_dir)
+-    request_log = output_dir / "request-log.jsonl"
+-    existing_output = output_dir.exists() and any(output_dir.iterdir())
+-    if existing_output and args.overwrite:
+-        print(f'Overwriting existing output for run_id "{args.run_id}" at {output_dir}.', file=sys.stderr)
+-        for child in output_dir.iterdir():
+-            if child.is_dir():
+-                shutil.rmtree(child)
+-            else:
+-                child.unlink()
+-    elif existing_output:
+-        original_output_dir = output_dir
+-        duplicate_index = 1
+-        while True:
+-            candidate = original_output_dir.parent / f"{original_output_dir.name}-duplicate-{duplicate_index}"
+-            if not candidate.exists():
+-                output_dir = candidate
+-                request_log = output_dir / "request-log.jsonl"
+-                print(
+-                    f'Run ID "{args.run_id}" already has output at {original_output_dir}; '
+-                    f"saving this duplicate run in {output_dir}.",
+-                    file=sys.stderr,
+-                )
+-                break
+-            duplicate_index += 1
+-    output_dir.mkdir(parents=True, exist_ok=True)
+-    os.environ["SIGNALPOST_REQUEST_LOG"] = str(request_log)
+-    os.environ["SIGNALPOST_SNAPSHOT_DIR"] = str((output_dir / "snapshots").resolve())
+-    os.environ["SIGNALPOST_RUN_ID"] = args.run_id
+-    os.environ["SIGNALPOST_CALLER_MODULE"] = "run_agent"
+-    discovery_limit = args.discovery_limit or args.expected_count
+-    started_monotonic = time.monotonic()
+-    started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+-    stages_run: list[str] = []
+-    stage_metrics: list[dict] = []
+-    discovery_reports: list[dict] = []   # Step 3: one entry per provider that ran
+-
+-    def run_stage(name: str, cmd: list[str], *, optional: bool = False) -> bool:
+-        (output_dir / "progress-stage.txt").write_text(name + "\n", encoding="utf-8")
+-        stage_started = time.monotonic()
+-        stage_started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+-        ok = run(cmd, optional=optional)
+-        stage_metrics.append({
+-            "stage": name,
+-            "started_at": stage_started_at,
+-            "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+-            "duration_ms": int((time.monotonic() - stage_started) * 1000),
+-            "requests": 0,
+-            "errors": 0,
+-        })
+-        return ok
+-
+-    # 1. Registry batch: identity, financials, financial_history, roles, group,
+-    # locations, single-page website. Required.
+-    profiles_path = output_dir / "profiles.jsonl"
+-    run_stage("registry", [
+-        args.python, str(ROOT / "run_competition_batch.py"),
+-        "--organisations", args.organisations,
+-        "--profiles-output", str(profiles_path),
+-        "--output", str(output_dir / "registry-envelopes.jsonl"),
+-        "--report", str(output_dir / "registry-report.json"),
+-        "--run-id", args.run_id,
+-        "--expected-count", str(args.expected_count),
+-        "--progress-file", str(output_dir / "progress.json"),
+-        "--modules", "registry,accounting_obligation,registry_live,financials,financial_history,roles,group,locations,website",
+-    ])
+-    stages_run.append("registry_batch")
+-
+-    # 2. Website discovery: Tavily, then Exa, for whatever's still missing.
+-    for name, script, env_var in (("tavily", "run_tavily_discovery.py", "TAVILY_API_KEY"), ("exa", "run_exa_discovery.py", "EXA_API_KEY")):
+-        if not os.environ.get(env_var, "").strip():
+-            print(f"No {env_var} set -- skipping {name} discovery.", file=sys.stderr)
+-            continue
+-        discovered_path = output_dir / f"profiles-with-{name}.jsonl"
+-        discovery_report_path = output_dir / f"{name}-discovery-report.json"
+-        ok = run_stage("discovery", [
+-            args.python, str(ARCHIVE_ROOT / script),
+-            "--input", str(profiles_path),
+-            "--output", str(discovered_path),
+-            "--report", str(discovery_report_path),
+-            "--limit", str(discovery_limit),
+-            "--promote-verified",
+-        ], optional=True)
+-        if ok:
+-            profiles_path = discovered_path
+-            stages_run.append(f"{name}_discovery")
+-            # Step 3: read the connector report and merge per-company discovery
+-            # outcomes into the telemetry companies dict so run-metrics.json
+-            # reflects verified/quarantined/abstained rather than just "searched".
+-            # API key values and query text are never present in these reports.
+-            if discovery_report_path.exists():
+-                try:
+-                    discovery_report = json.loads(discovery_report_path.read_text(encoding="utf-8"))
+-                    discovery_reports.append(discovery_report)
+-                except (json.JSONDecodeError, OSError):
+-                    pass  # Non-fatal: telemetry will fall back to request-log counts.
+-
+-    profiles = read_jsonl(profiles_path)
+-    backfill_top_level_website(profiles)
+-    write_jsonl(output_dir / "profiles.jsonl", profiles)
+-    profiles_path = output_dir / "profiles.jsonl"
+-
+-    # 3. Deep multi-page crawl (scrapy) of every company with a website
+-    # candidate. Best-effort: scrapy may not be installed everywhere.
+-    activity_obs_path = output_dir / "activity-observations.jsonl"
+-    news_obs_path = output_dir / "news-observations.jsonl"
+-    careers_obs_path = output_dir / "careers-observations.jsonl"
+-    has_scrapy = False
+-    if not args.skip_deep_crawl:
+-        try:
+-            import scrapy  # noqa: F401
+-            has_scrapy = True
+-        except ImportError:
+-            has_scrapy = False
+-
+-    if has_scrapy:
+-        crawl_input = output_dir / "crawl-input.jsonl"
+-        write_jsonl(crawl_input, [row for row in profiles if row.get("website")])
+-        crawled_path = output_dir / "profiles-crawled.jsonl"
+-        ok = run_stage("crawling", [
+-            args.python, str(ARCHIVE_ROOT / "run_scrapy_websites.py"),
+-            "--input", str(crawl_input),
+-            "--output", str(crawled_path),
+-            "--events", str(output_dir / "crawl-events.jsonl"),
+-            "--jobdir", str(output_dir / "crawl-jobdir"),
+-            "--report", str(output_dir / "crawl-report.json"),
+-            "--forensics", str(output_dir / "website-forensics.jsonl"),
+-        ], optional=True)
+-        if ok:
+-            crawled = read_jsonl(crawled_path)
+-            merge_profiles(profiles, crawled)
+-            write_jsonl(profiles_path, profiles)
+-            stages_run.append("deep_crawl")
+-
+-            # 4. Activity/news extraction from the deepened crawl. Pure Python,
+-            # always attempted once there's a crawl to extract from.
+-            run_stage("claims/evidence", [args.python, str(ARCHIVE_ROOT / "extract_company_site_activity.py"), "--profiles", str(profiles_path), "--output", str(activity_obs_path), "--report", str(output_dir / "activity-report.json")], optional=True)
+-            run_stage("claims/evidence", [args.python, str(ARCHIVE_ROOT / "extract_company_site_news.py"), "--profiles", str(profiles_path), "--output", str(news_obs_path), "--report", str(output_dir / "news-report.json")], optional=True)
+-            run_stage("claims/evidence", [args.python, str(ARCHIVE_ROOT / "extract_company_site_careers.py"), "--profiles", str(profiles_path), "--output", str(careers_obs_path), "--report", str(output_dir / "careers-report.json")], optional=True)
+-            if activity_obs_path.exists():
+-                stages_run.append("site_activity")
+-            if news_obs_path.exists():
+-                stages_run.append("site_news")
+-            if careers_obs_path.exists():
+-                stages_run.append("site_careers")
+-    elif args.skip_deep_crawl:
+-        print("Deep website crawl skipped (--skip-deep-crawl).", file=sys.stderr)
+-    else:
+-        print("scrapy not installed -- skipping deep crawl and activity/news extraction.", file=sys.stderr)
+-
+-    # 5. Official annual-report OCR workforce extraction. Already degrades
+-    # per-company internally; skip the whole stage only if asked to.
+-    workforce_obs_path = output_dir / "workforce-observations.jsonl"
+-    if not args.skip_workforce_ocr:
+-        orgs_path = output_dir / "all-orgs.txt"
+-        orgs_path.write_text("\n".join(row["organisation_number"] for row in profiles), encoding="utf-8")
+-        ok = run([
+-            args.python, str(ARCHIVE_ROOT / "run_annual_report_workforce_connector.py"),
+-            "--profiles", str(profiles_path),
+-            "--organisations", str(orgs_path),
+-            "--output", str(workforce_obs_path),
+-            "--cache", str(output_dir / "workforce-cache"),
+-            "--report", str(output_dir / "workforce-report.json"),
+-        ], optional=True)
+-        if ok:
+-            stages_run.append("workforce_ocr")
+-
+-    # 5b. Prior-year comparative financial figures, recovered from the same
+-    # annual-report OCR cache the workforce stage just populated -- no new
+-    # downloads or OCR, so this only runs if that cache exists.
+-    prior_year_obs_path = output_dir / "prior-year-financials-observations.jsonl"
+-    workforce_cache_dir = output_dir / "workforce-cache"
+-    if not args.skip_workforce_ocr and workforce_cache_dir.exists():
+-        ok = run([
+-            args.python, str(ARCHIVE_ROOT / "extract_prior_year_financials.py"),
+-            "--profiles", str(profiles_path),
+-            "--cache", str(workforce_cache_dir),
+-            "--output", str(prior_year_obs_path),
+-            "--report", str(output_dir / "prior-year-financials-report.json"),
+-        ], optional=True)
+-        if ok:
+-            stages_run.append("prior_year_financials")
+-
+-    completed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+-
+-    # 6. Claims/evidence conversion, folding in every observation file collected.
+-    envelopes_path = output_dir / "envelopes.jsonl"
+-    convert_cmd = [
+-        args.python, str(ROOT / "build_output_contract.py"),
+-        "--profiles", str(profiles_path),
+-        "--output", str(envelopes_path),
+-        "--report", str(output_dir / "contract-report.json"),
+-        "--run-id", args.run_id,
+-        "--started-at", started_at,
+-        "--completed-at", completed_at,
+-    ]
+-    for obs_path in (activity_obs_path, news_obs_path, careers_obs_path, workforce_obs_path, prior_year_obs_path):
+-        if obs_path.exists():
+-            convert_cmd += ["--observations", str(obs_path)]
+-    run_stage("claims/evidence", convert_cmd)
+-    stages_run.append("claims_conversion")
+-
+-    summary = {
+-        "run_id": args.run_id,
+-        "started_at": started_at,
+-        "completed_at": completed_at,
+-        "stages_run": stages_run,
+-        "profiles": str(profiles_path),
+-        "envelopes": str(envelopes_path),
+-        "metrics": str(output_dir / "run-metrics.json"),
+-    }
+-    (output_dir / "run-summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+-    completed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+-    all_events = read_events(request_log)
+-    foreign_run_ids = sorted({str(event.get("run_id")) for event in all_events if event.get("run_id") != args.run_id})
+-    if foreign_run_ids:
+-        print(
+-            f"Warning: request log contains events for other run_id values: {', '.join(foreign_run_ids)}; "
+-            f'filtering metrics to run_id "{args.run_id}".',
+-            file=sys.stderr,
+-        )
+-    events = [event for event in all_events if event.get("run_id") == args.run_id]
+-    companies = aggregate_company_metrics(events)
+-    # Step 3: merge per-company discovery outcomes from connector reports into
+-    # the companies dict so run-metrics.json shows verified/quarantined/abstained
+-    # rather than relying solely on the request-log-derived "searched" placeholder.
+-    for discovery_report in discovery_reports:
+-        apply_discovery_report(companies, discovery_report)
+-    metrics = build_metrics(events=events, run_id=args.run_id, input_file=args.organisations, input_count=args.expected_count, started_at=started_at, completed_at=completed_at, duration_ms=int((time.monotonic() - started_monotonic) * 1000), stage_metrics=stage_metrics, per_company=companies, command=sys.argv, discovery_reports=discovery_reports)
+-    metrics["stages"] = [{**stage, "requests": sum(1 for event in events if event.get("timestamp", "") >= stage["started_at"] and event.get("timestamp", "") <= stage["completed_at"]), "errors": sum(1 for event in events if not event.get("success") and event.get("timestamp", "") >= stage["started_at"] and event.get("timestamp", "") <= stage["completed_at"])} for stage in stage_metrics]
+-    (output_dir / "run-metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+-    print(json.dumps(summary, indent=2))
+-
+-
+-if __name__ == "__main__":
+-    main()
++#!/usr/bin/env python3
++"""Single evaluator entrypoint for the full Signalpost agent pipeline.
++
++Chains every stage of the pipeline into one command, as required by the
++"reproducible setup ... one evaluator command" hard gate:
++
++  1. registry batch (identity, financials, financial_history, roles, group,
++     locations, single-page website fetch) -- required, no optional deps.
++  2. website discovery (Tavily, then Exa) for companies still missing a site --
++     runs only if TAVILY_API_KEY / EXA_API_KEY is set (server-side secret, per
++     the locked evaluator budget's own requirement).
++  3. deep multi-page site crawl (scrapy) for every company with a website
++     candidate -- best-effort: skipped cleanly if the `scrapy` package isn't
++     installed in this environment, rather than failing the whole run.
++  4. company-owned activity/news extraction from the crawl -- pure-Python,
++     no optional dependency, always attempted.
++  5. official annual-report OCR workforce extraction -- best-effort per
++     company already (see run_annual_report_workforce_connector.py's own
++     broad except); still guarded here so a totally missing tesseract/poppler
++     install degrades to "no workforce data" rather than noisy per-company
++     errors for the whole batch.
++  6. claims/evidence envelope conversion, folding in every observation file
++     collected above.
++
++Every optional stage is best-effort: a failure is logged and the pipeline
++moves on rather than losing everything already collected. The registry batch
++(step 1) and the final conversion (step 6) are the only required stages --
++without them there is no submission at all.
++"""
++from __future__ import annotations
++
++import argparse
++import hashlib
++import json
++import os
++import re
++import subprocess
++import sys
++import time
++import uuid
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parent
++PROJECT_ROOT = ROOT.parent
++ARCHIVE_ROOT = PROJECT_ROOT / "archive" / "v2-crawler"
++sys.path.insert(0, str(PROJECT_ROOT / "src"))
++from norway_company_agent.env import load_local_env  # noqa: E402
++from norway_company_agent.telemetry import aggregate_company_metrics, apply_discovery_report, build_metrics, read_events  # noqa: E402
++
++
++def run(cmd: list[str], *, optional: bool = False) -> bool:
++    print("+ " + " ".join(cmd), file=sys.stderr)
++    try:
++        subprocess.run(cmd, check=True)
++        return True
++    except subprocess.CalledProcessError as exc:
++        if not optional:
++            raise
++        print(f"  (optional stage failed, continuing: {exc})", file=sys.stderr)
++        return False
++
++
++def read_jsonl(path: Path) -> list[dict]:
++    if not path.exists():
++        return []
++    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
++
++
++def atomic_write_text(path: Path, value: str) -> None:
++    path.parent.mkdir(parents=True, exist_ok=True)
++    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
++    try:
++        with temporary.open("w", encoding="utf-8", newline="") as handle:
++            handle.write(value)
++            handle.flush()
++            os.fsync(handle.fileno())
++        os.replace(temporary, path)
++    finally:
++        temporary.unlink(missing_ok=True)
++
++
++def atomic_write_json(path: Path, value: dict) -> None:
++    atomic_write_text(path, json.dumps(value, ensure_ascii=False, indent=2) + "\n")
++
++
++def write_jsonl(path: Path, rows: list[dict]) -> None:
++    path.parent.mkdir(parents=True, exist_ok=True)
++    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
++    try:
++        with temporary.open("w", encoding="utf-8", newline="") as handle:
++            for row in rows:
++                handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
++            handle.flush()
++            os.fsync(handle.fileno())
++        os.replace(temporary, path)
++    finally:
++        temporary.unlink(missing_ok=True)
++
++
++def path_sha256(path: Path) -> str:
++    digest = hashlib.sha256()
++    if path.is_file():
++        digest.update(path.name.encode("utf-8", errors="replace"))
++        with path.open("rb") as handle:
++            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
++                digest.update(chunk)
++        return digest.hexdigest()
++    if path.is_dir():
++        for child in sorted(item for item in path.rglob("*") if item.is_file()):
++            digest.update(child.relative_to(path).as_posix().encode("utf-8", errors="replace"))
++            with child.open("rb") as handle:
++                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
++                    digest.update(chunk)
++        return digest.hexdigest()
++    digest.update(("missing:" + str(path)).encode("utf-8", errors="replace"))
++    return digest.hexdigest()
++
++
++def stage_fingerprint(cmd: list[str], stage_name: str) -> tuple[str, list[str]]:
++    input_options = {"--organisations", "--input", "--profiles", "--cache", "--observations"}
++    output_options = {
++        "--output", "--profiles-output", "--report", "--progress-file",
++        "--jobdir", "--events", "--forensics",
++    }
++    inputs: list[tuple[str, Path]] = []
++    flags: list[str] = []
++    index = 2  # Skip interpreter and script path.
++    ignored_value_options = {"--started-at", "--completed-at"}
++    while index < len(cmd):
++        token = cmd[index]
++        if token == "--cache" and stage_name == "workforce_ocr" and index + 1 < len(cmd):
++            # This stage writes to the cache itself. Hashing it pre-run would
++            # make its marker invalid immediately after a successful run.
++            index += 2
++            continue
++        if token in ignored_value_options and index + 1 < len(cmd):
++            index += 2
++            continue
++        if token in input_options and index + 1 < len(cmd):
++            inputs.append((token, Path(cmd[index + 1])))
++            index += 2
++            continue
++        if token in output_options and index + 1 < len(cmd):
++            index += 2
++            continue
++        flags.append(token)
++        index += 1
++
++    digest = hashlib.sha256()
++    for option, raw_path in inputs:
++        input_path = raw_path.resolve()
++        digest.update(option.encode("utf-8"))
++        digest.update(b"\0")
++        digest.update(str(input_path).encode("utf-8", errors="replace"))
++        digest.update(b"\0")
++        digest.update(path_sha256(input_path).encode("ascii"))
++        digest.update(b"\n")
++    return digest.hexdigest(), flags
++
++
++def stage_output_paths(cmd: list[str]) -> list[Path]:
++    output_options = {"--output", "--profiles-output", "--report"}
++    result: list[Path] = []
++    index = 2
++    while index < len(cmd):
++        if cmd[index] in output_options and index + 1 < len(cmd):
++            result.append(Path(cmd[index + 1]))
++            index += 2
++        else:
++            index += 1
++    return result
++
++
++def merge_profiles(base: list[dict], updated: list[dict], *, only_if_has: str | None = None) -> int:
++    """Merge updated rows into base by organisation_number. Returns count merged."""
++    updated_by_org = {row["organisation_number"]: row for row in updated}
++    merged = 0
++    for index, row in enumerate(base):
++        candidate = updated_by_org.get(row["organisation_number"])
++        if not candidate:
++            continue
++        if only_if_has and not (candidate.get("evidence") or {}).get(only_if_has):
++            continue
++        base[index] = candidate
++        merged += 1
++    return merged
++
++
++def backfill_top_level_website(profiles: list[dict]) -> None:
++    for row in profiles:
++        if row.get("website"):
++            continue
++        web = row.get("evidence", {}).get("website") or {}
++        if web.get("status") == "available":
++            value = web.get("value") or {}
++            row["website"] = value.get("final_url") or web.get("source_url")
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser(description="Run the full Signalpost agent end to end.")
++    parser.add_argument("--organisations", required=True, help="JSONL/JSON/text list of organisation numbers")
++    parser.add_argument("--output-dir", required=True)
++    parser.add_argument("--run-id", required=True)
++    parser.add_argument("--expected-count", type=int, required=True)
++    parser.add_argument("--discovery-limit", type=int, default=None, help="Cap discovery queries; default is expected-count")
++    parser.add_argument("--skip-deep-crawl", dest="skip_deep_crawl", action="store_true", default=False, help="Skip the scrapy multi-page crawl stage")
++    parser.add_argument("--include-deep-crawl", dest="skip_deep_crawl", action="store_false", help="Enable the crawler (default)")
++    parser.add_argument("--skip-workforce-ocr", dest="skip_workforce_ocr", action="store_true", default=True, help="Skip the annual-report OCR workforce stage (default for V1 submission)")
++    parser.add_argument("--include-workforce-ocr", dest="skip_workforce_ocr", action="store_false", help="Enable annual-report OCR for V2 work")
++    parser.add_argument("--python", default=sys.executable)
++    args = parser.parse_args()
++
++    load_local_env(PROJECT_ROOT)
++    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", args.run_id) or args.run_id in {".", ".."}:
++        parser.error("--run-id may contain only letters, digits, dot, underscore, and hyphen")
++    output_dir = Path(args.output_dir).resolve()
++    # The launcher owns destructive cleanup via --fresh. This entrypoint never
++    # wipes an existing run directory, so direct invocations also resume safely.
++    output_dir.mkdir(parents=True, exist_ok=True)
++    request_log = output_dir / "request-log.jsonl"
++    workforce_cache_dir = PROJECT_ROOT / "cache" / "workforce-cache"
++    crawl_jobdir_root = PROJECT_ROOT / "cache" / args.run_id / "crawl-jobdir"
++    os.environ["SIGNALPOST_REQUEST_LOG"] = str(request_log)
++    os.environ["SIGNALPOST_SNAPSHOT_DIR"] = str((output_dir / "snapshots").resolve())
++    os.environ["SIGNALPOST_OUTPUT_DIR"] = str(output_dir.resolve())
++    os.environ["SIGNALPOST_CRAWL_TRACE_PATH"] = str((output_dir / "crawl-trace.jsonl").resolve())
++    os.environ["SIGNALPOST_QUARANTINE_PATH"] = str((output_dir / "validation-quarantine.jsonl").resolve())
++    os.environ["SIGNALPOST_RUN_ID"] = args.run_id
++    os.environ["SIGNALPOST_CALLER_MODULE"] = "run_agent"
++    discovery_limit = args.discovery_limit or args.expected_count
++    started_monotonic = time.monotonic()
++    started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
++    stages_run: list[str] = []
++    stage_metrics: list[dict] = []
++    discovery_reports: list[dict] = []   # Step 3: one entry per provider that ran
++
++    def run_stage(name: str, cmd: list[str], *, optional: bool = False) -> bool:
++        marker_dir = output_dir / "stages"
++        marker_dir.mkdir(parents=True, exist_ok=True)
++        marker_name = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-_") or "stage"
++        marker_path = marker_dir / f"{marker_name}.done"
++        input_sha256, flags = stage_fingerprint(cmd, name)
++        outputs = stage_output_paths(cmd)
++        try:
++            marker = json.loads(marker_path.read_text(encoding="utf-8"))
++        except (OSError, json.JSONDecodeError):
++            marker = {}
++        outputs_ready = bool(outputs) and all(path.exists() for path in outputs)
++        if (
++            marker.get("input_sha256") == input_sha256
++            and marker.get("flags") == flags
++            and outputs_ready
++        ):
++            now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
++            print(f"[{name}] skipped (done)", flush=True)
++            stage_metrics.append({
++                "stage": name,
++                "started_at": now,
++                "completed_at": now,
++                "duration_ms": 0,
++                "requests": 0,
++                "errors": 0,
++                "skipped": True,
++            })
++            return True
++
++        atomic_write_text(output_dir / "progress-stage.txt", name + "\n")
++        stage_started = time.monotonic()
++        stage_started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
++        ok = run(cmd, optional=optional)
++        completed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
++        stage_metrics.append({
++            "stage": name,
++            "started_at": stage_started_at,
++            "completed_at": completed_at,
++            "duration_ms": int((time.monotonic() - stage_started) * 1000),
++            "requests": 0,
++            "errors": 0 if ok else 1,
++            "skipped": False,
++        })
++        if ok:
++            atomic_write_json(marker_path, {
++                "input_sha256": input_sha256,
++                "flags": flags,
++                "completed_at": completed_at,
++            })
++        return ok
++
++    # 1. Registry batch: identity, financials, financial_history, roles, group,
++    # locations, single-page website. Required. Keep this artifact immutable so
++    # later merged profiles cannot invalidate the registry-stage marker.
++    profiles_path = output_dir / "profiles-stage1.jsonl"
++    run_stage("registry", [
++        args.python, str(ROOT / "run_competition_batch.py"),
++        "--organisations", args.organisations,
++        "--profiles-output", str(profiles_path),
++        "--output", str(output_dir / "registry-envelopes.jsonl"),
++        "--report", str(output_dir / "registry-report.json"),
++        "--run-id", args.run_id,
++        "--expected-count", str(args.expected_count),
++        "--progress-file", str(output_dir / "progress.json"),
++        "--modules", "registry,accounting_obligation,registry_live,financials,financial_history,roles,group,locations,website",
++    ])
++    stages_run.append("registry_batch")
++
++    # 2. Website discovery: Tavily, then Exa, for whatever's still missing.
++    for name, script, env_var in (("tavily", "run_tavily_discovery.py", "TAVILY_API_KEY"), ("exa", "run_exa_discovery.py", "EXA_API_KEY")):
++        if not os.environ.get(env_var, "").strip():
++            print(f"No {env_var} set -- skipping {name} discovery.", file=sys.stderr)
++            continue
++        discovered_path = output_dir / f"profiles-with-{name}.jsonl"
++        discovery_report_path = output_dir / f"{name}-discovery-report.json"
++        ok = run_stage(f"{name}_discovery", [
++            args.python, str(ARCHIVE_ROOT / script),
++            "--input", str(profiles_path),
++            "--output", str(discovered_path),
++            "--report", str(discovery_report_path),
++            "--limit", str(discovery_limit),
++            "--promote-verified",
++        ], optional=True)
++        if ok:
++            profiles_path = discovered_path
++            stages_run.append(f"{name}_discovery")
++            # Step 3: read the connector report and merge per-company discovery
++            # outcomes into the telemetry companies dict so run-metrics.json
++            # reflects verified/quarantined/abstained rather than just "searched".
++            # API key values and query text are never present in these reports.
++            if discovery_report_path.exists():
++                try:
++                    discovery_report = json.loads(discovery_report_path.read_text(encoding="utf-8"))
++                    discovery_reports.append(discovery_report)
++                except (json.JSONDecodeError, OSError):
++                    pass  # Non-fatal: telemetry will fall back to request-log counts.
++
++    profiles = read_jsonl(profiles_path)
++    backfill_top_level_website(profiles)
++    write_jsonl(output_dir / "profiles.jsonl", profiles)
++    profiles_path = output_dir / "profiles.jsonl"
++
++    # 3. Deep multi-page crawl (scrapy) of every company with a website
++    # candidate. Best-effort: scrapy may not be installed everywhere.
++    activity_obs_path = output_dir / "activity-observations.jsonl"
++    news_obs_path = output_dir / "news-observations.jsonl"
++    careers_obs_path = output_dir / "careers-observations.jsonl"
++    has_scrapy = False
++    if not args.skip_deep_crawl:
++        try:
++            import scrapy  # noqa: F401
++            has_scrapy = True
++        except ImportError:
++            has_scrapy = False
++
++    if has_scrapy:
++        crawl_input = output_dir / "crawl-input.jsonl"
++        write_jsonl(crawl_input, [row for row in profiles if row.get("website")])
++        crawl_jobdir = crawl_jobdir_root / path_sha256(crawl_input)
++        crawled_path = output_dir / "profiles-crawled.jsonl"
++        ok = run_stage("deep_crawl", [
++            args.python, str(ARCHIVE_ROOT / "run_scrapy_websites.py"),
++            "--input", str(crawl_input),
++            "--output", str(crawled_path),
++            "--events", str(output_dir / "crawl-events.jsonl"),
++            "--jobdir", str(crawl_jobdir),
++            "--report", str(output_dir / "crawl-report.json"),
++            "--forensics", str(output_dir / "website-forensics.jsonl"),
++        ], optional=True)
++        if ok:
++            crawled = read_jsonl(crawled_path)
++            merge_profiles(profiles, crawled)
++            write_jsonl(profiles_path, profiles)
++            stages_run.append("deep_crawl")
++
++            # 4. Activity/news extraction from the deepened crawl. Pure Python,
++            # always attempted once there's a crawl to extract from.
++            run_stage("site_activity", [args.python, str(ARCHIVE_ROOT / "extract_company_site_activity.py"), "--profiles", str(profiles_path), "--output", str(activity_obs_path), "--report", str(output_dir / "activity-report.json")], optional=True)
++            run_stage("site_news", [args.python, str(ARCHIVE_ROOT / "extract_company_site_news.py"), "--profiles", str(profiles_path), "--output", str(news_obs_path), "--report", str(output_dir / "news-report.json")], optional=True)
++            run_stage("site_careers", [args.python, str(ARCHIVE_ROOT / "extract_company_site_careers.py"), "--profiles", str(profiles_path), "--output", str(careers_obs_path), "--report", str(output_dir / "careers-report.json")], optional=True)
++            if activity_obs_path.exists():
++                stages_run.append("site_activity")
++            if news_obs_path.exists():
++                stages_run.append("site_news")
++            if careers_obs_path.exists():
++                stages_run.append("site_careers")
++    elif args.skip_deep_crawl:
++        print("Deep website crawl skipped (--skip-deep-crawl).", file=sys.stderr)
++    else:
++        print("scrapy not installed -- skipping deep crawl and activity/news extraction.", file=sys.stderr)
++
++    # 5. Official annual-report OCR workforce extraction. Already degrades
++    # per-company internally; skip the whole stage only if asked to.
++    workforce_obs_path = output_dir / "workforce-observations.jsonl"
++    if not args.skip_workforce_ocr:
++        orgs_path = output_dir / "all-orgs.txt"
++        atomic_write_text(orgs_path, "\n".join(row["organisation_number"] for row in profiles))
++        ok = run_stage("workforce_ocr", [
++            args.python, str(ARCHIVE_ROOT / "run_annual_report_workforce_connector.py"),
++            "--profiles", str(profiles_path),
++            "--organisations", str(orgs_path),
++            "--output", str(workforce_obs_path),
++            "--cache", str(workforce_cache_dir),
++            "--report", str(output_dir / "workforce-report.json"),
++        ], optional=True)
++        if ok:
++            stages_run.append("workforce_ocr")
++
++    # 5b. Prior-year comparative financial figures, recovered from the same
++    # annual-report OCR cache the workforce stage just populated -- no new
++    # downloads or OCR, so this only runs if that cache exists.
++    prior_year_obs_path = output_dir / "prior-year-financials-observations.jsonl"
++    if not args.skip_workforce_ocr and workforce_cache_dir.exists():
++        ok = run_stage("prior_year_financials", [
++            args.python, str(ARCHIVE_ROOT / "extract_prior_year_financials.py"),
++            "--profiles", str(profiles_path),
++            "--cache", str(workforce_cache_dir),
++            "--output", str(prior_year_obs_path),
++            "--report", str(output_dir / "prior-year-financials-report.json"),
++        ], optional=True)
++        if ok:
++            stages_run.append("prior_year_financials")
++
++    completed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
++
++    # 6. Claims/evidence conversion, folding in every observation file collected.
++    envelopes_path = output_dir / "envelopes.jsonl"
++    convert_cmd = [
++        args.python, str(ROOT / "build_output_contract.py"),
++        "--profiles", str(profiles_path),
++        "--output", str(envelopes_path),
++        "--report", str(output_dir / "contract-report.json"),
++        "--run-id", args.run_id,
++        "--started-at", started_at,
++        "--completed-at", completed_at,
++    ]
++    for obs_path in (activity_obs_path, news_obs_path, careers_obs_path, workforce_obs_path, prior_year_obs_path):
++        if obs_path.exists():
++            convert_cmd += ["--observations", str(obs_path)]
++    run_stage("claims_conversion", convert_cmd)
++    stages_run.append("claims_conversion")
++
++    summary = {
++        "run_id": args.run_id,
++        "started_at": started_at,
++        "completed_at": completed_at,
++        "stages_run": stages_run,
++        "profiles": str(profiles_path),
++        "envelopes": str(envelopes_path),
++        "metrics": str(output_dir / "run-metrics.json"),
++    }
++    atomic_write_json(output_dir / "run-summary.json", summary)
++    completed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
++    all_events = read_events(request_log)
++    foreign_run_ids = sorted({str(event.get("run_id")) for event in all_events if event.get("run_id") != args.run_id})
++    if foreign_run_ids:
++        print(
++            f"Warning: request log contains events for other run_id values: {', '.join(foreign_run_ids)}; "
++            f'filtering metrics to run_id "{args.run_id}".',
++            file=sys.stderr,
++        )
++    events = [event for event in all_events if event.get("run_id") == args.run_id]
++    companies = aggregate_company_metrics(events)
++    # Step 3: merge per-company discovery outcomes from connector reports into
++    # the companies dict so run-metrics.json shows verified/quarantined/abstained
++    # rather than relying solely on the request-log-derived "searched" placeholder.
++    for discovery_report in discovery_reports:
++        apply_discovery_report(companies, discovery_report)
++    metrics = build_metrics(events=events, run_id=args.run_id, input_file=args.organisations, input_count=args.expected_count, started_at=started_at, completed_at=completed_at, duration_ms=int((time.monotonic() - started_monotonic) * 1000), stage_metrics=stage_metrics, per_company=companies, command=sys.argv, discovery_reports=discovery_reports)
++    metrics["stages"] = [{**stage, "requests": sum(1 for event in events if event.get("timestamp", "") >= stage["started_at"] and event.get("timestamp", "") <= stage["completed_at"]), "errors": sum(1 for event in events if not event.get("success") and event.get("timestamp", "") >= stage["started_at"] and event.get("timestamp", "") <= stage["completed_at"])} for stage in stage_metrics]
++    atomic_write_json(output_dir / "run-metrics.json", metrics)
++    print(json.dumps(summary, indent=2))
++
++
++if __name__ == "__main__":
++    main()
+--- a/scripts/build_output_contract.py
++++ b/scripts/build_output_contract.py
+@@ -4,7 +4,9 @@
+ import argparse
+ import copy
+ import json
++import os
+ import sys
++import uuid
+ from pathlib import Path
+ 
+ 
+@@ -21,6 +23,33 @@
+     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+ 
+ 
++def atomic_write_text(path: Path, value: str) -> None:
++    path.parent.mkdir(parents=True, exist_ok=True)
++    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
++    try:
++        with temporary.open("w", encoding="utf-8", newline="") as handle:
++            handle.write(value)
++            handle.flush()
++            os.fsync(handle.fileno())
++        os.replace(temporary, path)
++    finally:
++        temporary.unlink(missing_ok=True)
++
++
++def atomic_write_jsonl(path: Path, rows: list[dict]) -> None:
++    path.parent.mkdir(parents=True, exist_ok=True)
++    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
++    try:
++        with temporary.open("w", encoding="utf-8", newline="") as handle:
++            for row in rows:
++                handle.write(json.dumps(row, ensure_ascii=False) + "\n")
++            handle.flush()
++            os.fsync(handle.fileno())
++        os.replace(temporary, path)
++    finally:
++        temporary.unlink(missing_ok=True)
++
++
+ def observations_by_organisation(paths: list[str]) -> dict[str, list[dict]]:
+     grouped: dict[str, list[dict]] = {}
+     for raw_path in paths:
+@@ -147,17 +176,15 @@
+             claims_failed_orgs.append(organisation_number)
+         fat_envelopes.append(envelope)
+ 
+-    output_path.parent.mkdir(parents=True, exist_ok=True)
+-    with output_path.open("w", encoding="utf-8") as handle:
+-        for row in fat_envelopes:
+-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
++    atomic_write_jsonl(output_path, fat_envelopes)
+ 
+     report_path.parent.mkdir(parents=True, exist_ok=True)
+     report_run_id = args.run_id or next(
+         (str(row.get("run_id")) for row in fat_envelopes if row.get("run_id")),
+         "run-v1",
+     )
+-    report_path.write_text(
++    atomic_write_text(
++        report_path,
+         json.dumps(
+             {
+                 "rows": len(fat_envelopes),
+@@ -168,8 +195,7 @@
+             },
+             ensure_ascii=False,
+             indent=2,
+-        ),
+-        encoding="utf-8",
++        ) + "\n",
+     )
+     return 0
+ 

@@ -1,0 +1,17 @@
+{"event":"crawler_started","timestamp":"2026-10-09T06:02:45.936529Z","organisation_number":"810202572","url":""}
+{"event":"crawler_completed","timestamp":"2026-10-09T06:02:45.938701Z","organisation_number":"810202572","status":"not_found"}
+{"event":"crawler_started","timestamp":"2026-10-09T06:02:46.348528Z","organisation_number":"810094532","url":""}
+{"event":"crawler_completed","timestamp":"2026-10-09T06:02:46.349617Z","organisation_number":"810094532","status":"not_found"}
+{"event":"crawler_started","timestamp":"2026-10-09T06:02:46.573420Z","organisation_number":"810182482","url":""}
+{"event":"crawler_completed","timestamp":"2026-10-09T06:02:46.574843Z","organisation_number":"810182482","status":"not_found"}
+{"event":"crawler_started","timestamp":"2026-10-09T06:02:46.576014Z","organisation_number":"810034882","url":""}
+{"event":"crawler_completed","timestamp":"2026-10-09T06:02:46.577826Z","organisation_number":"810034882","status":"not_found"}
+{"event":"crawler_started","timestamp":"2026-10-09T06:02:46.578096Z","organisation_number":"810130822","url":""}
+{"event":"crawler_completed","timestamp":"2026-10-09T06:02:46.579963Z","organisation_number":"810130822","status":"not_found"}
+{"event":"crawler_completed","timestamp":"2026-10-09T06:02:46.581462Z","organisation_number":"810059672","status":"not_found"}
+{"event":"crawler_started","timestamp":"2026-10-09T06:02:46.635265Z","organisation_number":"810274042","url":""}
+{"event":"crawler_completed","timestamp":"2026-10-09T06:02:46.636610Z","organisation_number":"810274042","status":"not_found"}
+{"event":"crawler_started","timestamp":"2026-10-09T06:02:46.637423Z","organisation_number":"810105372","url":""}
+{"event":"crawler_completed","timestamp":"2026-10-09T06:02:46.639153Z","organisation_number":"810105372","status":"not_found"}
+{"event":"crawler_started","timestamp":"2026-10-09T06:02:46.666636Z","organisation_number":"810098252","url":""}
+{"event":"crawler_completed","timestamp":"2026-10-09T06:02:46.668312Z","organisation_number":"810098252","status":"not_found"}

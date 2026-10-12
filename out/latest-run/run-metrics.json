@@ -1,0 +1,420 @@
+{
+  "run_id": "run-20261009-060234-846931",
+  "started_at": "2026-10-09T06:02:35Z",
+  "completed_at": "2026-10-09T06:02:58Z",
+  "duration_ms": 23651,
+  "command": [
+    "C:\\Users\\sunil.sonu\\Downloads\\signalpost-company-agent-main\\signalpost-company-agent-main\\scripts\\run_agent.py",
+    "--organisations",
+    "C:\\Users\\sunil.sonu\\Downloads\\signalpost-company-agent-main\\signalpost-company-agent-main\\entry-companies.jsonl",
+    "--output-dir",
+    "C:\\Users\\sunil.sonu\\Downloads\\signalpost-company-agent-main\\signalpost-company-agent-main\\out\\latest-run",
+    "--run-id",
+    "run-20261009-060234-846931",
+    "--expected-count",
+    "9",
+    "--include-workforce-ocr",
+    "--include-deep-crawl"
+  ],
+  "input": {
+    "input_file": "C:\\Users\\sunil.sonu\\Downloads\\signalpost-company-agent-main\\signalpost-company-agent-main\\entry-companies.jsonl",
+    "input_count": 9,
+    "processed_count": 9,
+    "success_count": 1,
+    "failed_count": 0,
+    "skipped_count": 0
+  },
+  "requests": {
+    "total_api_calls": 54,
+    "successful_calls": 46,
+    "failed_calls": 8,
+    "cache_hits": 0,
+    "cache_misses": 54,
+    "retry_attempts": 0,
+    "retry_successes": 0,
+    "by_failure_class": {
+      "not_found": 8,
+      "success": 46
+    },
+    "by_provider": {
+      "BRREG": {
+        "total": 54,
+        "successful": 46,
+        "failed": 8,
+        "cache_hits": 0,
+        "cache_misses": 54
+      }
+    },
+    "by_module": {
+      "financial_history": 9,
+      "financials": 9,
+      "group": 9,
+      "locations": 9,
+      "registry_live": 9,
+      "roles": 9
+    },
+    "discovery": []
+  },
+  "stages": [
+    {
+      "stage": "registry",
+      "started_at": "2026-10-09T06:02:35Z",
+      "completed_at": "2026-10-09T06:02:46Z",
+      "duration_ms": 11733,
+      "requests": 54,
+      "errors": 8
+    },
+    {
+      "stage": "claims/evidence",
+      "started_at": "2026-10-09T06:02:57Z",
+      "completed_at": "2026-10-09T06:02:58Z",
+      "duration_ms": 1498,
+      "requests": 0,
+      "errors": 0
+    }
+  ],
+  "companies": {
+    "810034882": {
+      "duration_ms": 9395,
+      "sum_request_duration_ms": 9395,
+      "wall_clock_duration_ms": 7989,
+      "first_request_at": "2026-10-09T06:02:38.580971Z",
+      "last_request_at": "2026-10-09T06:02:46.570866Z",
+      "retry_attempt_count": 0,
+      "retry_success_count": 0,
+      "status": "completed_with_gaps",
+      "api_request_count": 6,
+      "cache_hit_count": 0,
+      "error_count": 1,
+      "stages_executed": [
+        "registry"
+      ],
+      "modules_executed": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "group",
+        "locations"
+      ],
+      "modules_succeeded": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "locations"
+      ],
+      "modules_not_found": [
+        "group"
+      ],
+      "modules_failed": [],
+      "discovery_attempted": false,
+      "discovery_provider": null,
+      "discovery_outcome": null
+    },
+    "810059672": {
+      "duration_ms": 9362,
+      "sum_request_duration_ms": 9362,
+      "wall_clock_duration_ms": 7989,
+      "first_request_at": "2026-10-09T06:02:38.581550Z",
+      "last_request_at": "2026-10-09T06:02:46.571437Z",
+      "retry_attempt_count": 0,
+      "retry_success_count": 0,
+      "status": "completed_with_gaps",
+      "api_request_count": 6,
+      "cache_hit_count": 0,
+      "error_count": 1,
+      "stages_executed": [
+        "registry"
+      ],
+      "modules_executed": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "group",
+        "locations"
+      ],
+      "modules_succeeded": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "locations"
+      ],
+      "modules_not_found": [
+        "group"
+      ],
+      "modules_failed": [],
+      "discovery_attempted": false,
+      "discovery_provider": null,
+      "discovery_outcome": null
+    },
+    "810274042": {
+      "duration_ms": 9392,
+      "sum_request_duration_ms": 9392,
+      "wall_clock_duration_ms": 7883,
+      "first_request_at": "2026-10-09T06:02:38.748264Z",
+      "last_request_at": "2026-10-09T06:02:46.631895Z",
+      "retry_attempt_count": 0,
+      "retry_success_count": 0,
+      "status": "completed_with_gaps",
+      "api_request_count": 6,
+      "cache_hit_count": 0,
+      "error_count": 1,
+      "stages_executed": [
+        "registry"
+      ],
+      "modules_executed": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "group",
+        "locations"
+      ],
+      "modules_succeeded": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "locations"
+      ],
+      "modules_not_found": [
+        "group"
+      ],
+      "modules_failed": [],
+      "discovery_attempted": false,
+      "discovery_provider": null,
+      "discovery_outcome": null
+    },
+    "810094532": {
+      "duration_ms": 9143,
+      "sum_request_duration_ms": 9143,
+      "wall_clock_duration_ms": 7586,
+      "first_request_at": "2026-10-09T06:02:38.759513Z",
+      "last_request_at": "2026-10-09T06:02:46.345631Z",
+      "retry_attempt_count": 0,
+      "retry_success_count": 0,
+      "status": "completed",
+      "api_request_count": 6,
+      "cache_hit_count": 0,
+      "error_count": 0,
+      "stages_executed": [
+        "registry"
+      ],
+      "modules_executed": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "group",
+        "locations"
+      ],
+      "modules_succeeded": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "group",
+        "locations"
+      ],
+      "modules_not_found": [],
+      "modules_failed": [],
+      "discovery_attempted": false,
+      "discovery_provider": null,
+      "discovery_outcome": null
+    },
+    "810105372": {
+      "duration_ms": 9410,
+      "sum_request_duration_ms": 9410,
+      "wall_clock_duration_ms": 7872,
+      "first_request_at": "2026-10-09T06:02:38.759842Z",
+      "last_request_at": "2026-10-09T06:02:46.632795Z",
+      "retry_attempt_count": 0,
+      "retry_success_count": 0,
+      "status": "completed_with_gaps",
+      "api_request_count": 6,
+      "cache_hit_count": 0,
+      "error_count": 1,
+      "stages_executed": [
+        "registry"
+      ],
+      "modules_executed": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "group",
+        "locations"
+      ],
+      "modules_succeeded": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "locations"
+      ],
+      "modules_not_found": [
+        "group"
+      ],
+      "modules_failed": [],
+      "discovery_attempted": false,
+      "discovery_provider": null,
+      "discovery_outcome": null
+    },
+    "810202572": {
+      "duration_ms": 8697,
+      "sum_request_duration_ms": 8697,
+      "wall_clock_duration_ms": 7144,
+      "first_request_at": "2026-10-09T06:02:38.789318Z",
+      "last_request_at": "2026-10-09T06:02:45.933672Z",
+      "retry_attempt_count": 0,
+      "retry_success_count": 0,
+      "status": "completed_with_gaps",
+      "api_request_count": 6,
+      "cache_hit_count": 0,
+      "error_count": 1,
+      "stages_executed": [
+        "registry"
+      ],
+      "modules_executed": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "group",
+        "locations"
+      ],
+      "modules_succeeded": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "locations"
+      ],
+      "modules_not_found": [
+        "group"
+      ],
+      "modules_failed": [],
+      "discovery_attempted": false,
+      "discovery_provider": null,
+      "discovery_outcome": null
+    },
+    "810130822": {
+      "duration_ms": 9344,
+      "sum_request_duration_ms": 9344,
+      "wall_clock_duration_ms": 7781,
+      "first_request_at": "2026-10-09T06:02:38.789517Z",
+      "last_request_at": "2026-10-09T06:02:46.571051Z",
+      "retry_attempt_count": 0,
+      "retry_success_count": 0,
+      "status": "completed_with_gaps",
+      "api_request_count": 6,
+      "cache_hit_count": 0,
+      "error_count": 1,
+      "stages_executed": [
+        "registry"
+      ],
+      "modules_executed": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "group",
+        "locations"
+      ],
+      "modules_succeeded": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "locations"
+      ],
+      "modules_not_found": [
+        "group"
+      ],
+      "modules_failed": [],
+      "discovery_attempted": false,
+      "discovery_provider": null,
+      "discovery_outcome": null
+    },
+    "810098252": {
+      "duration_ms": 9450,
+      "sum_request_duration_ms": 9450,
+      "wall_clock_duration_ms": 7870,
+      "first_request_at": "2026-10-09T06:02:38.791819Z",
+      "last_request_at": "2026-10-09T06:02:46.662060Z",
+      "retry_attempt_count": 0,
+      "retry_success_count": 0,
+      "status": "completed_with_gaps",
+      "api_request_count": 6,
+      "cache_hit_count": 0,
+      "error_count": 1,
+      "stages_executed": [
+        "registry"
+      ],
+      "modules_executed": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "group",
+        "locations"
+      ],
+      "modules_succeeded": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "locations"
+      ],
+      "modules_not_found": [
+        "group"
+      ],
+      "modules_failed": [],
+      "discovery_attempted": false,
+      "discovery_provider": null,
+      "discovery_outcome": null
+    },
+    "810182482": {
+      "duration_ms": 9337,
+      "sum_request_duration_ms": 9337,
+      "wall_clock_duration_ms": 7739,
+      "first_request_at": "2026-10-09T06:02:38.829874Z",
+      "last_request_at": "2026-10-09T06:02:46.569640Z",
+      "retry_attempt_count": 0,
+      "retry_success_count": 0,
+      "status": "completed_with_gaps",
+      "api_request_count": 6,
+      "cache_hit_count": 0,
+      "error_count": 1,
+      "stages_executed": [
+        "registry"
+      ],
+      "modules_executed": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "group",
+        "locations"
+      ],
+      "modules_succeeded": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "locations"
+      ],
+      "modules_not_found": [
+        "group"
+      ],
+      "modules_failed": [],
+      "discovery_attempted": false,
+      "discovery_provider": null,
+      "discovery_outcome": null
+    }
+  },
+  "request_log": "request-log.jsonl"
+}

@@ -1,0 +1,14 @@
+{
+  "run_id": "run-20261009-060234-846931",
+  "started_at": "2026-10-09T06:02:35Z",
+  "completed_at": "2026-10-09T06:02:57Z",
+  "stages_run": [
+    "registry_batch",
+    "workforce_ocr",
+    "prior_year_financials",
+    "claims_conversion"
+  ],
+  "profiles": "C:\\Users\\sunil.sonu\\Downloads\\signalpost-company-agent-main\\signalpost-company-agent-main\\out\\latest-run\\profiles.jsonl",
+  "envelopes": "C:\\Users\\sunil.sonu\\Downloads\\signalpost-company-agent-main\\signalpost-company-agent-main\\out\\latest-run\\envelopes.jsonl",
+  "metrics": "C:\\Users\\sunil.sonu\\Downloads\\signalpost-company-agent-main\\signalpost-company-agent-main\\out\\latest-run\\run-metrics.json"
+}

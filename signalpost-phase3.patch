@@ -1,0 +1,1892 @@
+diff --git a/docs/CODEBASE_MAP.md b/docs/CODEBASE_MAP.md
+index 2831fc5..5a21381 100644
+--- a/docs/CODEBASE_MAP.md
++++ b/docs/CODEBASE_MAP.md
+@@ -16,7 +16,8 @@ Final output of that command: `result/envelopes.jsonl` (one JSON object per comp
+ 2. Before deleting or renaming ANY file, read section 11 (dependency and safe-to-delete table) and section 12 (traps). Several things that look dead or archived are load-bearing.
+ 3. Before adding a stage or module, follow the recipes in section 11.3.
+ 4. Section 13 lists what was NOT read in depth. Do not assume those files behave as described beyond their signatures. Open them before editing.
+-5. The pipeline was NOT executed while writing this file. Runtime behavior is inferred from code plus the sample artifacts in `out/latest-run/` (20 companies).
++5. PHASE 3 OVERRIDE: sections 2 (row 2), 7.4 and 10 describe the fat envelope and are outdated. `result/envelopes.jsonl` is now the public envelope (`schema_version`, `run`, `modules`, `claims`, `evidence`, `changes`, `errors`, `operations`; no `profile`). Vocabulary lives only in `src/norway_company_agent/vocabulary.py`. `scripts/validate_envelopes.py` runs after stage 6 and writes `validation-report.json` (also copied to `result/`). `build_output_contract.py --envelope-format fat` still produces the legacy shape.
++6. The pipeline was NOT executed while writing this file. Runtime behavior is inferred from code plus the sample artifacts in `out/latest-run/` (20 companies).
+ 
+ ---
+ 
+@@ -487,7 +488,7 @@ python run.py --organisations entry-companies.jsonl --include-workforce-ocr
+ python run.py --organisations entry-companies.jsonl --include-workforce-ocr --skip-deep-crawl
+ 
+ # Rebuild result/envelopes.jsonl from an existing envelope/profile file, no collection
+-python run.py --source-envelopes out/latest-run/envelopes.jsonl
++python run.py --source-envelopes out/latest-run/profiles.jsonl
+ 
+ # Run the orchestrator directly (does not wipe anything; picks "-duplicate-N" dir if output exists)
+ python scripts/run_agent.py --organisations entry-companies.jsonl --output-dir out/test --run-id test-1 --expected-count 20 --include-workforce-ocr
+diff --git a/run.py b/run.py
+index ad0e771..4e76460 100644
+--- a/run.py
++++ b/run.py
+@@ -21,6 +21,7 @@ DEFAULT_INPUT = PROJECT_ROOT / "entry-companies.jsonl"
+ OUT_DIR = PROJECT_ROOT / "out"
+ WORK_DIR = OUT_DIR / "latest-run"  # Set to out/<run_id> in main().
+ RESULT_FILE = PROJECT_ROOT / "result" / "envelopes.jsonl"
++VALIDATION_FILE = PROJECT_ROOT / "result" / "validation-report.json"
+ LATEST_RUN_ID_FILE = OUT_DIR / ".latest-run-id"
+ INPUT_HASH_FILE = "input.sha256"
+ sys.path.insert(0, str(PROJECT_ROOT / "src"))
+@@ -55,6 +56,7 @@ def clear_run_outputs() -> None:
+     if OUT_DIR.exists():
+         shutil.rmtree(OUT_DIR)
+     RESULT_FILE.unlink(missing_ok=True)
++    VALIDATION_FILE.unlink(missing_ok=True)
+ 
+ 
+ def sha256_file(path: Path) -> str:
+@@ -78,6 +80,23 @@ def atomic_write_text(path: Path, value: str) -> None:
+         temporary.unlink(missing_ok=True)
+ 
+ 
++def publish_validation_report() -> None:
++    """Copy validation-report.json next to the final envelopes and print the verdict."""
++    source = WORK_DIR / "validation-report.json"
++    if not source.exists():
++        print("WARNING | validation-report.json was not produced; envelopes are unvalidated.", file=sys.stderr)
++        return
++    atomic_copy_file(source, VALIDATION_FILE)
++    try:
++        report = json.loads(source.read_text(encoding="utf-8"))
++    except (OSError, json.JSONDecodeError):
++        print(f"WARNING | {VALIDATION_FILE} is unreadable.", file=sys.stderr)
++        return
++    failed = [name for name, check in (report.get("checks") or {}).items() if not check.get("passed")]
++    verdict = "PASSED" if report.get("passed") else "FAILED (" + ", ".join(failed) + ")"
++    print(f"Validation: {verdict} | report: {VALIDATION_FILE}")
++
++
+ def atomic_copy_file(source: Path, destination: Path) -> None:
+     """Publish a complete copy atomically so a crash cannot truncate destination."""
+     destination.parent.mkdir(parents=True, exist_ok=True)
+@@ -251,7 +270,7 @@ def main() -> int:
+     parser.add_argument(
+         "--source-envelopes",
+         type=Path,
+-        help="Convert an existing populated envelope JSONL without rerunning collection.",
++        help="Rebuild envelopes from a profiles or fat-envelope JSONL without rerunning collection. Public envelopes carry no profile and are rejected.",
+     )
+     parser.add_argument("--include-workforce-ocr", dest="skip_workforce_ocr", action="store_false", default=True,
+                         help="Enable annual-report OCR workforce extraction (default: disabled).")
+@@ -418,6 +437,7 @@ def main() -> int:
+             if produced_envelope_count:
+                 atomic_copy_file(source, RESULT_FILE)
+                 print(f"Partial envelope output preserved at {RESULT_FILE}", file=sys.stderr)
++                publish_validation_report()
+         else:
+             print(f"Run failed. Intermediate files were kept in {WORK_DIR}", file=sys.stderr)
+         return return_code
+@@ -426,6 +446,7 @@ def main() -> int:
+         print(f"Run finished but envelope file was not created: {source}", file=sys.stderr)
+         return 1
+     atomic_copy_file(source, RESULT_FILE)
++    publish_validation_report()
+     print_final_summary(success=True, expected_count=expected_count, state=progress, elapsed=elapsed, return_code=0)
+     if produced_envelope_count != expected_count:
+         print(
+diff --git a/scripts/build_output_contract.py b/scripts/build_output_contract.py
+index 1393c0a..6c65aa8 100644
+--- a/scripts/build_output_contract.py
++++ b/scripts/build_output_contract.py
+@@ -14,7 +14,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ sys.path.insert(0, str(PROJECT_ROOT / "src"))
+ 
+ from norway_company_agent.batch import terminal_envelope  # noqa: E402
+-from norway_company_agent.output_contract import to_public_envelope  # noqa: E402
++from norway_company_agent.output_contract import conversion_failure_envelope, to_public_envelope  # noqa: E402
++from norway_company_agent.vocabulary import SCHEMA_VERSION  # noqa: E402
++
++ENVELOPE_FORMATS = ("public", "fat")
+ 
+ 
+ def read_jsonl(path: Path) -> list[dict]:
+@@ -62,14 +65,14 @@ def observations_by_organisation(paths: list[str]) -> dict[str, list[dict]]:
+ 
+ 
+ def attach_claims(envelope: dict) -> dict:
+-    """Add the public claims/evidence projection without changing the fat envelope."""
++    """Fat format: add the public claims/evidence projection to the fat envelope."""
+     public = to_public_envelope(envelope)
+     envelope["claims"] = public["claims"]
+     envelope["evidence"] = public["evidence"]
+     return envelope
+ 
+ 
+-def build_envelope(
++def build_fat(
+     row: dict,
+     *,
+     run_id: str,
+@@ -77,44 +80,56 @@ def build_envelope(
+     completed_at: str,
+     observations: list[dict],
+ ) -> dict:
+-    if row.get("profile") is not None and row.get("modules") is not None:
+-        envelope = copy.deepcopy(row)
+-        if run_id:
+-            envelope["run_id"] = run_id
+-        if started_at:
+-            envelope["started_at"] = started_at
+-        if completed_at:
+-            envelope["completed_at"] = completed_at
+-        if observations:
+-            profile = copy.deepcopy(envelope.get("profile") or {})
+-            profile["observations"] = observations
+-            envelope["profile"] = profile
+-        return attach_claims(envelope)
+-
++    """Rebuild the fat envelope from the profile. Module states are always recomputed
++    from profile.evidence; whatever `modules` an input envelope carried is ignored."""
+     profile = copy.deepcopy(row.get("profile") or row)
+     if observations:
+         profile["observations"] = observations
+-    modules = list((profile.get("evidence") or {}).keys())
+-    envelope = terminal_envelope(
++    return terminal_envelope(
+         profile,
+-        run_id=run_id or "run-v1",
+-        modules=modules,
+-        started_at=started_at,
+-        completed_at=completed_at,
++        run_id=run_id or str(row.get("run_id") or "") or "run-v1",
++        started_at=started_at or str(row.get("started_at") or ""),
++        completed_at=completed_at or str(row.get("completed_at") or ""),
++    )
++
++
++def build_envelope(
++    row: dict,
++    *,
++    run_id: str,
++    started_at: str,
++    completed_at: str,
++    observations: list[dict],
++    envelope_format: str = "public",
++) -> dict:
++    if envelope_format not in ENVELOPE_FORMATS:
++        raise ValueError(f"envelope_format must be one of {ENVELOPE_FORMATS}, got {envelope_format!r}")
++    fat = build_fat(
++        row, run_id=run_id, started_at=started_at, completed_at=completed_at, observations=observations,
+     )
+-    return attach_claims(envelope)
++    if envelope_format == "fat":
++        return attach_claims(fat)
++    return to_public_envelope(fat)
++
++
++def is_public_envelope(row: dict) -> bool:
++    return isinstance(row.get("claims"), list) and isinstance(row.get("run"), dict) and "profile" not in row
+ 
+ 
+ def main() -> int:
+-    p = argparse.ArgumentParser(description="Minimal output contract builder for V1")
++    p = argparse.ArgumentParser(description="Output contract builder: profiles -> envelopes")
+     p.add_argument("--input", help="Compatible alias for input profiles/envelopes path")
+     p.add_argument("--profiles", help="Profiles JSONL file to convert")
+-    p.add_argument("--output", required=True, help="Fat envelopes JSONL output path")
++    p.add_argument("--output", required=True, help="Envelopes JSONL output path")
+     p.add_argument("--report", help="Optional report output path")
+     p.add_argument("--run-id", default="")
+     p.add_argument("--started-at", default="")
+     p.add_argument("--completed-at", default="")
+     p.add_argument("--observations", action="append", default=[])
++    p.add_argument(
++        "--envelope-format", choices=ENVELOPE_FORMATS, default="public",
++        help="public: claims-based output (default). fat: legacy envelope with the full profile.",
++    )
+     args = p.parse_args()
+ 
+     source_path = Path(args.input or args.profiles or "")
+@@ -127,8 +142,14 @@ def main() -> int:
+     report_path = Path(args.report) if args.report else output_path.parent / "contract-report.json"
+ 
+     rows = read_jsonl(source_path)
++    public_rows = [row for row in rows if is_public_envelope(row)]
++    if public_rows:
++        p.error(
++            f"{len(public_rows)} input row(s) are already public envelopes; they carry no profile and "
++            "cannot be rebuilt. Feed profiles.jsonl or fat envelopes instead."
++        )
+     observations = observations_by_organisation(args.observations)
+-    fat_envelopes: list[dict] = []
++    envelopes: list[dict] = []
+     claims_failed_orgs: list[str] = []
+     for row in rows:
+         organisation_number = str(
+@@ -141,55 +162,58 @@ def main() -> int:
+                 started_at=args.started_at,
+                 completed_at=args.completed_at,
+                 observations=observations.get(organisation_number, []),
++                envelope_format=args.envelope_format,
+             )
+         except Exception as exc:
+             # Stage 6 is batch-critical, but a malformed company must not prevent
+-            # usable envelopes for every other company.
+-            if row.get("profile") is not None and row.get("modules") is not None:
+-                envelope = copy.deepcopy(row)
+-                if args.run_id:
+-                    envelope["run_id"] = args.run_id
+-                if args.started_at:
+-                    envelope["started_at"] = args.started_at
+-                if args.completed_at:
+-                    envelope["completed_at"] = args.completed_at
+-                profile = copy.deepcopy(envelope.get("profile") or {})
+-            else:
+-                profile = copy.deepcopy(row.get("profile") or row)
+-                envelope = None
+-            if observations.get(organisation_number):
+-                profile["observations"] = observations[organisation_number]
+-            if envelope is None:
+-                modules = list((profile.get("evidence") or {}).keys())
+-                envelope = terminal_envelope(
+-                    profile,
+-                    run_id=args.run_id or str(row.get("run_id") or "run-v1"),
+-                    modules=modules,
+-                    started_at=args.started_at or str(row.get("started_at") or ""),
+-                    completed_at=args.completed_at or str(row.get("completed_at") or ""),
+-                )
+-            else:
+-                envelope["profile"] = profile
+-            envelope["claims"] = []
+-            envelope["evidence"] = []
+-            envelope["claims_error"] = f"{type(exc).__name__}: {str(exc)[:240]}"
++            # usable envelopes for every other company. The failure stays visible:
++            # terminal_status=failed, failed claims, and an errors[] entry.
++            failed_row = dict(row)
++            failed_row["run_id"] = args.run_id or str(row.get("run_id") or "")
++            failed_row["started_at"] = args.started_at or str(row.get("started_at") or "")
++            failed_row["completed_at"] = args.completed_at or str(row.get("completed_at") or "")
++            envelope = conversion_failure_envelope(failed_row, exc)
++            if args.envelope_format == "fat":
++                envelope = {
++                    "schema_version": SCHEMA_VERSION,
++                    "run_id": envelope["run"]["run_id"],
++                    "organisation_number": organisation_number,
++                    "terminal_status": "failed",
++                    "started_at": envelope["run"]["started_at"],
++                    "completed_at": envelope["run"]["completed_at"],
++                    "modules": envelope["modules"],
++                    "profile": row.get("profile") or row,
++                    "claims": envelope["claims"],
++                    "evidence": [],
++                    "errors": envelope["errors"],
++                }
+             claims_failed_orgs.append(organisation_number)
+-        fat_envelopes.append(envelope)
++        envelopes.append(envelope)
+ 
+-    atomic_write_jsonl(output_path, fat_envelopes)
++    atomic_write_jsonl(output_path, envelopes)
+ 
+     report_path.parent.mkdir(parents=True, exist_ok=True)
+-    report_run_id = args.run_id or next(
+-        (str(row.get("run_id")) for row in fat_envelopes if row.get("run_id")),
+-        "run-v1",
+-    )
++
++    def run_id_of(item: dict) -> str:
++        return str(item.get("run_id") or (item.get("run") or {}).get("run_id") or "")
++
++    def status_of(item: dict) -> str:
++        return str(item.get("terminal_status") or (item.get("run") or {}).get("terminal_status") or "")
++
++    report_run_id = args.run_id or next((run_id_of(item) for item in envelopes if run_id_of(item)), "run-v1")
++    status_counts: dict[str, int] = {}
++    for item in envelopes:
++        status_counts[status_of(item)] = status_counts.get(status_of(item), 0) + 1
+     atomic_write_text(
+         report_path,
+         json.dumps(
+             {
+-                "rows": len(fat_envelopes),
++                "schema_version": SCHEMA_VERSION,
++                "envelope_format": args.envelope_format,
++                "rows": len(envelopes),
+                 "status": "ok",
+                 "run_id": report_run_id,
++                "terminal_status_counts": status_counts,
+                 "claims_failed": len(claims_failed_orgs),
+                 "claims_failed_orgs": claims_failed_orgs,
+             },
+diff --git a/scripts/run_agent.py b/scripts/run_agent.py
+index f83dc40..bce70c8 100644
+--- a/scripts/run_agent.py
++++ b/scripts/run_agent.py
+@@ -46,6 +46,7 @@ ARCHIVE_ROOT = PROJECT_ROOT / "archive" / "v2-crawler"
+ sys.path.insert(0, str(PROJECT_ROOT / "src"))
+ from norway_company_agent.env import load_local_env  # noqa: E402
+ from norway_company_agent.telemetry import aggregate_company_metrics, apply_discovery_report, build_metrics, read_events  # noqa: E402
++from norway_company_agent.vocabulary import SCHEMA_VERSION  # noqa: E402
+ 
+ 
+ def run(cmd: list[str], *, optional: bool = False) -> bool:
+@@ -437,13 +438,28 @@ def main() -> None:
+     run_stage("claims_conversion", convert_cmd)
+     stages_run.append("claims_conversion")
+ 
++    # 6b. Validate the envelopes just written. Optional: a failed validation is reported
++    # in validation-report.json and on stderr, it does not delete the envelopes.
++    validation_report_path = output_dir / "validation-report.json"
++    ok = run_stage("envelope_validation", [
++        args.python, str(ROOT / "validate_envelopes.py"),
++        "--input", str(envelopes_path),
++        "--report", str(validation_report_path),
++        "--run-id", args.run_id,
++        "--expected-count", str(args.expected_count),
++    ], optional=True)
++    if ok:
++        stages_run.append("envelope_validation")
++
+     summary = {
++        "schema_version": SCHEMA_VERSION,
+         "run_id": args.run_id,
+         "started_at": started_at,
+         "completed_at": completed_at,
+         "stages_run": stages_run,
+         "profiles": str(profiles_path),
+         "envelopes": str(envelopes_path),
++        "validation_report": str(validation_report_path),
+         "metrics": str(output_dir / "run-metrics.json"),
+     }
+     atomic_write_json(output_dir / "run-summary.json", summary)
+@@ -465,6 +481,7 @@ def main() -> None:
+         apply_discovery_report(companies, discovery_report)
+     metrics = build_metrics(events=events, run_id=args.run_id, input_file=args.organisations, input_count=args.expected_count, started_at=started_at, completed_at=completed_at, duration_ms=int((time.monotonic() - started_monotonic) * 1000), stage_metrics=stage_metrics, per_company=companies, command=sys.argv, discovery_reports=discovery_reports)
+     metrics["stages"] = [{**stage, "requests": sum(1 for event in events if event.get("timestamp", "") >= stage["started_at"] and event.get("timestamp", "") <= stage["completed_at"]), "errors": sum(1 for event in events if not event.get("success") and event.get("timestamp", "") >= stage["started_at"] and event.get("timestamp", "") <= stage["completed_at"])} for stage in stage_metrics]
++    metrics["schema_version"] = SCHEMA_VERSION
+     atomic_write_json(output_dir / "run-metrics.json", metrics)
+     print(json.dumps(summary, indent=2))
+ 
+diff --git a/scripts/run_competition_batch.py b/scripts/run_competition_batch.py
+index bf0e3ce..ebd5aa2 100644
+--- a/scripts/run_competition_batch.py
++++ b/scripts/run_competition_batch.py
+@@ -21,6 +21,7 @@ from norway_company_agent.batch import (  # noqa: E402
+     read_organisation_inputs,
+     terminal_envelope,
+ )
++from norway_company_agent.vocabulary import SCHEMA_VERSION, batch_state  # noqa: E402
+ from norway_company_agent.identity import apply_website_identity_gate  # noqa: E402
+ from norway_company_agent.official import (  # noqa: E402
+     accounting_obligation_assessment,
+@@ -345,8 +346,8 @@ def collect_profile(
+             gated = apply_website_identity_gate(profile, website_record)
+             evidence["website"] = gated["website"]
+         retry_source_error_modules(profile, modules)
+-        if profile.get("_batch_state") != "failed":
+-            profile["_batch_state"] = "ok"
++        # _batch_state is derived from terminal_status: failed iff a required module is source_error.
++        profile["_batch_state"] = batch_state(profile)
+         if progress:
+             progress.finished_company(
+                 organisation_number,
+@@ -406,6 +407,9 @@ def collect_profile(
+                 source_row_key=organisation_number,
+             )
+         retry_source_error_modules(profile, modules)
++        profile["_batch_state"] = batch_state(profile)
++        if profile["_batch_state"] == "ok":
++            profile.pop("_batch_error", None)
+         if progress:
+             progress.finished_company(
+                 organisation_number,
+@@ -522,7 +526,6 @@ def main() -> int:
+         terminal_envelope(
+             row,
+             run_id=args.run_id,
+-            modules=row.get("evidence", {}).keys(),
+             started_at="",
+             completed_at="",
+         )
+@@ -577,11 +580,12 @@ def main() -> int:
+     if progress and not failed_orgs:
+         progress_failed = progress.state.get("failed") or 0
+         if progress_failed:
+-            print(f"  (progress-tracker failed: {progress_failed}; envelopes still marked complete)", flush=True)
++            print(f"  (progress-tracker failed: {progress_failed}; envelopes carry terminal_status, not a failed flag)", flush=True)
+     print("=" * 60, flush=True)
+     print("", flush=True)
+ 
+     report = {
++        "schema_version": SCHEMA_VERSION,
+         "run_id": args.run_id,
+         "expected_count": expected,
+         "profiles_written": len(collected),
+diff --git a/scripts/validate_envelopes.py b/scripts/validate_envelopes.py
+new file mode 100644
+index 0000000..82b5abd
+--- /dev/null
++++ b/scripts/validate_envelopes.py
+@@ -0,0 +1,385 @@
++#!/usr/bin/env python3
++"""Validate a public envelopes JSONL file and write validation-report.json.
++
++Checks 1-10 are the Phase 3 list. Checks 11-14 are added because a validator that
++ignores run identity, terminal_status consistency, row count and conversion failures
++proves little.
++
++Exit code: 0 all checks passed, 1 at least one check failed, 2 file unreadable.
++"""
++from __future__ import annotations
++
++import argparse
++import hashlib
++import json
++import os
++import re
++import sys
++import uuid
++from collections import Counter
++from datetime import datetime, timezone
++from pathlib import Path
++from typing import Any
++
++PROJECT_ROOT = Path(__file__).resolve().parent.parent
++sys.path.insert(0, str(PROJECT_ROOT / "src"))
++
++from norway_company_agent.output_contract import (  # noqa: E402
++    ALLOWED_AVAILABILITY,
++    CANONICAL_CLAIM_FIELDS,
++    CLAIM_FIELD_ORDER,
++    PUBLIC_EVIDENCE_KEYS,
++    PUBLIC_RUN_KEYS,
++    PUBLIC_TOP_LEVEL_KEYS,
++)
++from norway_company_agent.vocabulary import (  # noqa: E402
++    MODULE_KEYS,
++    SCHEMA_VERSION,
++    TERMINAL_STATUSES,
++    derive_terminal_status,
++    invalid_module_states,
++)
++
++HEX64 = re.compile(r"^[0-9a-f]{64}$")
++ORG_NUMBER = re.compile(r"^\d{9}$")
++EVIDENCE_ID = re.compile(r"^ev-(\d{9})-(\d+)$")
++CLAIM_KEYSET = tuple(sorted(CANONICAL_CLAIM_FIELDS))
++EXAMPLE_LIMIT = 5
++
++CHECK_NAMES = (
++    "01_row_keysets_identical",
++    "02_claim_keysets_and_fields_identical",
++    "03_evidence_ids_resolve",
++    "04_available_claims_have_evidence",
++    "05_no_orphan_evidence",
++    "06_content_sha256_valid",
++    "07_evidence_id_matches_org",
++    "08_enum_values_allowed",
++    "09_org_numbers_unique_9_digit",
++    "10_completed_not_before_started",
++    "11_single_run_id",
++    "12_terminal_status_consistent_with_modules",
++    "13_expected_count",
++    "14_no_conversion_failures",
++)
++
++
++def _org(row: dict[str, Any]) -> str:
++    return str(row.get("organisation_number"))
++
++
++def _evidence_items(row: dict[str, Any]) -> list[dict[str, Any]]:
++    return [item for item in row.get("evidence") or [] if isinstance(item, dict)]
++
++
++def _claims(row: dict[str, Any]) -> list[dict[str, Any]]:
++    return [claim for claim in row.get("claims") or [] if isinstance(claim, dict)]
++
++
++def _parse_time(value: Any) -> datetime | None:
++    if not isinstance(value, str) or not value:
++        return None
++    try:
++        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
++    except ValueError:
++        return None
++    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
++
++
++def check_row_keysets(rows: list[dict[str, Any]]) -> list[str]:
++    out: list[str] = []
++    for row in rows:
++        keys = tuple(row)
++        if keys != PUBLIC_TOP_LEVEL_KEYS:
++            out.append(f"{_org(row)}: top-level keys {sorted(set(keys) ^ set(PUBLIC_TOP_LEVEL_KEYS))} differ from schema")
++        run = row.get("run")
++        if not isinstance(run, dict) or tuple(run) != PUBLIC_RUN_KEYS:
++            out.append(f"{_org(row)}: run keys differ from {list(PUBLIC_RUN_KEYS)}")
++        modules = row.get("modules")
++        if not isinstance(modules, dict) or tuple(modules) != MODULE_KEYS:
++            out.append(f"{_org(row)}: modules keys differ from the fixed {len(MODULE_KEYS)}-key list")
++        for item in _evidence_items(row):
++            if tuple(item) != PUBLIC_EVIDENCE_KEYS:
++                out.append(f"{_org(row)}: evidence {item.get('id')} keys {list(item)} differ from {list(PUBLIC_EVIDENCE_KEYS)}")
++    return out
++
++
++def check_claims(rows: list[dict[str, Any]]) -> list[str]:
++    out: list[str] = []
++    expected = list(CLAIM_FIELD_ORDER)
++    for row in rows:
++        claims = _claims(row)
++        for claim in claims:
++            if tuple(sorted(claim)) != CLAIM_KEYSET:
++                out.append(f"{_org(row)}: claim {claim.get('field')!r} keys {sorted(claim)} differ from {list(CLAIM_KEYSET)}")
++        fields = [claim.get("field") for claim in claims]
++        if fields != expected:
++            duplicates = [name for name, count in Counter(fields).items() if count > 1]
++            out.append(
++                f"{_org(row)}: claim fields differ (missing={[f for f in expected if f not in fields]}, "
++                f"extra={[f for f in fields if f not in expected]}, duplicates={duplicates})"
++            )
++    return out
++
++
++def check_evidence_resolves(rows: list[dict[str, Any]]) -> list[str]:
++    out: list[str] = []
++    for row in rows:
++        known = {item.get("id") for item in _evidence_items(row)}
++        for claim in _claims(row):
++            for evidence_id in claim.get("evidence_ids") or []:
++                if evidence_id not in known:
++                    out.append(f"{_org(row)}: claim {claim.get('field')!r} references missing evidence {evidence_id!r}")
++    return out
++
++
++def check_available_has_evidence(rows: list[dict[str, Any]]) -> list[str]:
++    return [
++        f"{_org(row)}: claim {claim.get('field')!r} is available with no evidence_ids"
++        for row in rows
++        for claim in _claims(row)
++        if claim.get("availability") == "available" and not claim.get("evidence_ids")
++    ]
++
++
++def check_orphans(rows: list[dict[str, Any]]) -> list[str]:
++    out: list[str] = []
++    for row in rows:
++        referenced = {evidence_id for claim in _claims(row) for evidence_id in claim.get("evidence_ids") or []}
++        for item in _evidence_items(row):
++            if item.get("id") not in referenced:
++                out.append(f"{_org(row)}: evidence {item.get('id')!r} is referenced by no claim")
++    return out
++
++
++def check_sha256(rows: list[dict[str, Any]]) -> list[str]:
++    """64 lowercase hex wherever the evidence backs an available claim; elsewhere
++    null (nothing was fetched) or 64 hex. An empty string is never valid."""
++    out: list[str] = []
++    for row in rows:
++        backing = {
++            evidence_id
++            for claim in _claims(row)
++            if claim.get("availability") == "available"
++            for evidence_id in claim.get("evidence_ids") or []
++        }
++        for item in _evidence_items(row):
++            sha = item.get("content_sha256")
++            if isinstance(sha, str) and HEX64.match(sha):
++                continue
++            if sha is None and item.get("id") not in backing:
++                continue
++            out.append(f"{_org(row)}: evidence {item.get('id')!r} content_sha256 {sha!r} invalid (backs available claim: {item.get('id') in backing})")
++    return out
++
++
++def check_evidence_ids(rows: list[dict[str, Any]]) -> list[str]:
++    out: list[str] = []
++    seen: dict[str, str] = {}
++    for row in rows:
++        for item in _evidence_items(row):
++            evidence_id = str(item.get("id"))
++            match = EVIDENCE_ID.match(evidence_id)
++            if not match:
++                out.append(f"{_org(row)}: evidence id {evidence_id!r} does not match ev-<org>-<n>")
++            elif match.group(1) != _org(row):
++                out.append(f"{_org(row)}: evidence id {evidence_id!r} carries another organisation number")
++            if evidence_id in seen:
++                out.append(f"{_org(row)}: evidence id {evidence_id!r} already used by {seen[evidence_id]}")
++            seen[evidence_id] = _org(row)
++    return out
++
++
++def check_enums(rows: list[dict[str, Any]]) -> list[str]:
++    out: list[str] = []
++    for row in rows:
++        org = _org(row)
++        if row.get("schema_version") != SCHEMA_VERSION:
++            out.append(f"{org}: schema_version {row.get('schema_version')!r} != {SCHEMA_VERSION!r}")
++        status = (row.get("run") or {}).get("terminal_status")
++        if status not in TERMINAL_STATUSES:
++            out.append(f"{org}: terminal_status {status!r} not in {list(TERMINAL_STATUSES)}")
++        out.extend(f"{org}: {problem}" for problem in invalid_module_states(row.get("modules") or {}))
++        for claim in _claims(row):
++            field = claim.get("field")
++            if claim.get("availability") not in ALLOWED_AVAILABILITY:
++                out.append(f"{org}: claim {field!r} availability {claim.get('availability')!r} not in {sorted(ALLOWED_AVAILABILITY)}")
++            confidence = claim.get("confidence")
++            if confidence is not None and (
++                isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1
++            ):
++                out.append(f"{org}: claim {field!r} confidence {confidence!r} outside [0, 1]")
++            if claim.get("availability") == "not_available" and confidence is not None:
++                out.append(f"{org}: claim {field!r} is not_available but confidence is {confidence!r}, must be null")
++    return out
++
++
++def check_org_numbers(rows: list[dict[str, Any]]) -> list[str]:
++    out = [f"organisation_number {row.get('organisation_number')!r} is not 9 digits" for row in rows
++           if not ORG_NUMBER.match(str(row.get("organisation_number")))]
++    out.extend(
++        f"organisation_number {org} appears {count} times"
++        for org, count in Counter(_org(row) for row in rows).items() if count > 1
++    )
++    return out
++
++
++def check_timestamps(rows: list[dict[str, Any]]) -> list[str]:
++    out: list[str] = []
++    for row in rows:
++        run = row.get("run") or {}
++        started, completed = _parse_time(run.get("started_at")), _parse_time(run.get("completed_at"))
++        if started is None or completed is None:
++            out.append(f"{_org(row)}: started_at {run.get('started_at')!r} / completed_at {run.get('completed_at')!r} not parseable")
++        elif completed < started:
++            out.append(f"{_org(row)}: completed_at {run.get('completed_at')} is before started_at {run.get('started_at')}")
++    return out
++
++
++def check_run_id(rows: list[dict[str, Any]], expected: str | None) -> list[str]:
++    ids = {str((row.get("run") or {}).get("run_id") or "") for row in rows}
++    out: list[str] = []
++    if "" in ids:
++        out.append("at least one row has an empty run_id")
++    if len(ids - {""}) > 1:
++        out.append(f"rows disagree on run_id: {sorted(ids)}")
++    if expected and ids - {expected}:
++        out.append(f"run_id {sorted(ids - {expected})} != expected {expected!r}")
++    return out
++
++
++def check_terminal_status(rows: list[dict[str, Any]]) -> list[str]:
++    out: list[str] = []
++    for row in rows:
++        modules = row.get("modules") or {}
++        if invalid_module_states(modules):
++            continue  # check 8 already reports it
++        expected = derive_terminal_status(modules)
++        actual = (row.get("run") or {}).get("terminal_status")
++        if actual != expected:
++            out.append(f"{_org(row)}: terminal_status {actual!r} but modules imply {expected!r}")
++    return out
++
++
++def check_expected_count(rows: list[dict[str, Any]], expected: int | None) -> list[str]:
++    if expected is None:
++        return []
++    return [f"{len(rows)} envelopes, expected {expected}"] if len(rows) != expected else []
++
++
++def check_conversion_failures(rows: list[dict[str, Any]]) -> list[str]:
++    """A row the builder could not convert (for example an unknown status) is a validation error."""
++    return [
++        f"{_org(row)}: {error.get('message')}"
++        for row in rows
++        for error in row.get("errors") or []
++        if isinstance(error, dict) and error.get("error_type") == "conversion_failed"
++    ]
++
++
++def validate(rows: list[dict[str, Any]], *, run_id: str | None = None, expected_count: int | None = None) -> dict[str, list[str]]:
++    results = {
++        CHECK_NAMES[0]: check_row_keysets(rows),
++        CHECK_NAMES[1]: check_claims(rows),
++        CHECK_NAMES[2]: check_evidence_resolves(rows),
++        CHECK_NAMES[3]: check_available_has_evidence(rows),
++        CHECK_NAMES[4]: check_orphans(rows),
++        CHECK_NAMES[5]: check_sha256(rows),
++        CHECK_NAMES[6]: check_evidence_ids(rows),
++        CHECK_NAMES[7]: check_enums(rows),
++        CHECK_NAMES[8]: check_org_numbers(rows),
++        CHECK_NAMES[9]: check_timestamps(rows),
++        CHECK_NAMES[10]: check_run_id(rows, run_id),
++        CHECK_NAMES[11]: check_terminal_status(rows),
++        CHECK_NAMES[12]: check_expected_count(rows, expected_count),
++        CHECK_NAMES[13]: check_conversion_failures(rows),
++    }
++    return results
++
++
++def sha256_file(path: Path) -> str:
++    digest = hashlib.sha256()
++    with path.open("rb") as handle:
++        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
++            digest.update(chunk)
++    return digest.hexdigest()
++
++
++def read_rows(path: Path) -> tuple[list[dict[str, Any]], list[str]]:
++    rows: list[dict[str, Any]] = []
++    problems: list[str] = []
++    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
++        if not line.strip():
++            continue
++        try:
++            value = json.loads(line)
++        except json.JSONDecodeError as exc:
++            problems.append(f"line {number}: invalid JSON ({exc.msg})")
++            continue
++        if isinstance(value, dict):
++            rows.append(value)
++        else:
++            problems.append(f"line {number}: not a JSON object")
++    return rows, problems
++
++
++def build_report(path: Path, rows: list[dict[str, Any]], parse_problems: list[str], *, run_id: str | None, expected_count: int | None) -> dict[str, Any]:
++    results = validate(rows, run_id=run_id, expected_count=expected_count)
++    if parse_problems:
++        results[CHECK_NAMES[0]] = parse_problems + results[CHECK_NAMES[0]]
++    run_ids = sorted({str((row.get("run") or {}).get("run_id") or "") for row in rows} - {""})
++    return {
++        "schema_version": SCHEMA_VERSION,
++        "run_id": run_id or (run_ids[0] if len(run_ids) == 1 else None),
++        "envelopes_file": str(path),
++        "envelopes_sha256": sha256_file(path),
++        "envelope_count": len(rows),
++        "validated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
++        "passed": not any(results.values()),
++        "checks": {
++            name: {
++                "passed": not violations,
++                "violation_count": len(violations),
++                "examples": violations[:EXAMPLE_LIMIT],
++            }
++            for name, violations in results.items()
++        },
++    }
++
++
++def atomic_write_json(path: Path, value: dict[str, Any]) -> None:
++    path.parent.mkdir(parents=True, exist_ok=True)
++    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
++    try:
++        temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
++        os.replace(temporary, path)
++    finally:
++        temporary.unlink(missing_ok=True)
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser(description="Validate public envelopes and write validation-report.json")
++    parser.add_argument("--input", "--envelopes", dest="input", required=True, type=Path, help="Public envelopes JSONL")
++    parser.add_argument("--report", type=Path, help="Default: validation-report.json next to the input")
++    parser.add_argument("--run-id", default=None, help="Run id every envelope must carry")
++    parser.add_argument("--expected-count", type=int, default=None)
++    args = parser.parse_args()
++
++    try:
++        rows, parse_problems = read_rows(args.input)
++        report = build_report(args.input, rows, parse_problems, run_id=args.run_id, expected_count=args.expected_count)
++    except OSError as exc:
++        print(f"Cannot read {args.input}: {exc}", file=sys.stderr)
++        return 2
++    report_path = args.report or args.input.parent / "validation-report.json"
++    atomic_write_json(report_path, report)
++
++    failed = {name: check for name, check in report["checks"].items() if not check["passed"]}
++    print(f"VALIDATION {'PASSED' if report['passed'] else 'FAILED'} | {report['envelope_count']} envelopes | report: {report_path}")
++    for name, check in failed.items():
++        print(f"  {name}: {check['violation_count']} violation(s), e.g. {check['examples'][0]}", file=sys.stderr)
++    return 0 if report["passed"] else 1
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/src/norway_company_agent/batch.py b/src/norway_company_agent/batch.py
+index 52a13fe..3720bc9 100644
+--- a/src/norway_company_agent/batch.py
++++ b/src/norway_company_agent/batch.py
+@@ -5,18 +5,13 @@ from pathlib import Path
+ from typing import Any, Iterable
+ 
+ from .evidence import evidence, utc_now
+-
+-
+-TERMINAL_STATES = {
+-    "complete",
+-    "not_applicable",
+-    "not_found",
+-    "blocked_policy",
+-    "blocked_robots",
+-    "source_error",
+-    "budget_exhausted",
+-    "submission_error",
+-}
++from .vocabulary import (
++    SCHEMA_VERSION,
++    TERMINAL_STATUSES,
++    derive_terminal_status,
++    invalid_module_states,
++    module_states,
++)
+ 
+ 
+ def read_organisation_inputs(path: str | Path) -> list[dict[str, Any]]:
+@@ -122,65 +117,47 @@ def backfill_from_registry_live(profile: dict[str, Any]) -> dict[str, Any]:
+     return profile
+ 
+ 
+-def evidence_terminal_state(record: dict[str, Any] | None) -> str:
+-    if not record:
+-        return "submission_error"
+-    status = record.get("status")
+-    if status == "available":
+-        return "complete"
+-    if status == "not_applicable":
+-        return "not_applicable"
+-    if status == "not_found":
+-        return "not_found"
+-    if status == "blocked":
+-        note = str(record.get("note") or "").casefold()
+-        return "blocked_robots" if "robot" in note else "blocked_policy"
+-    if status == "source_error":
+-        return "source_error"
+-    return "submission_error"
+-
+-
+ def terminal_envelope(
+     profile: dict[str, Any],
+     *,
+     run_id: str,
+-    modules: Iterable[str],
+     started_at: str,
+     completed_at: str,
+ ) -> dict[str, Any]:
+-    module_states = {}
+-    for module in modules:
+-        record = profile.get("evidence", {}).get(module)
+-        module_states[module] = {
+-            "state": evidence_terminal_state(record),
+-            "retry_count": int((record or {}).get("retry_count") or 0),
+-            "final_timestamp": (record or {}).get("retrieved_at") or completed_at,
+-        }
+-    entity_state = "submission_error" if any(item["state"] == "submission_error" for item in module_states.values()) else "complete"
++    """Fat envelope. Module keys are the fixed MODULE_KEYS list, never the evidence keys."""
++    states = module_states(profile)
++    for module, state in states.items():
++        record = (profile.get("evidence") or {}).get(module)
++        state["final_timestamp"] = (record or {}).get("retrieved_at") or completed_at
+     return {
++        "schema_version": SCHEMA_VERSION,
+         "run_id": run_id,
+         "organisation_number": profile["organisation_number"],
+-        "state": entity_state,
++        "terminal_status": derive_terminal_status(states),
+         "started_at": started_at,
+         "completed_at": completed_at,
+-        "modules": module_states,
++        "modules": states,
+         "profile": profile,
+     }
+ 
+ 
+ def validate_envelopes(envelopes: list[dict[str, Any]], expected_count: int) -> dict[str, Any]:
++    """Count/vocabulary check that works on both fat and public envelopes."""
+     orgs = [item.get("organisation_number") for item in envelopes]
++
++    def status_of(item: dict[str, Any]) -> Any:
++        return item.get("terminal_status", (item.get("run") or {}).get("terminal_status"))
++
+     invalid_states = [
+-        {"organisation_number": item.get("organisation_number"), "state": state.get("state")}
++        {"organisation_number": item.get("organisation_number"), "problem": problem}
+         for item in envelopes
+-        for state in item.get("modules", {}).values()
+-        if state.get("state") not in TERMINAL_STATES
++        for problem in invalid_module_states(item.get("modules") or {})
+     ]
+     checks = {
+         "exact_expected_count": len(envelopes) == expected_count,
+         "unique_organisation_numbers": len(orgs) == len(set(orgs)),
+-        "all_entity_states_terminal": all(item.get("state") in TERMINAL_STATES for item in envelopes),
+-        "all_module_states_terminal": not invalid_states,
++        "all_terminal_statuses_valid": all(status_of(item) in TERMINAL_STATUSES for item in envelopes),
++        "all_module_states_valid": not invalid_states,
+         "zero_silent_drops": len(envelopes) == expected_count and len(orgs) == len(set(orgs)),
+     }
+     return {"passed": all(checks.values()), "checks": checks, "invalid_states": invalid_states}
+diff --git a/src/norway_company_agent/output_contract.py b/src/norway_company_agent/output_contract.py
+index e878a8f..ae07875 100644
+--- a/src/norway_company_agent/output_contract.py
++++ b/src/norway_company_agent/output_contract.py
+@@ -3,6 +3,7 @@ from __future__ import annotations
+ from typing import Any
+ 
+ from .changes import diff_claims
++from .vocabulary import MODULE_KEYS, SCHEMA_VERSION, derive_terminal_status, module_states
+ from .website import normalize_website_value
+ 
+ 
+@@ -128,6 +129,13 @@ def assert_claim_schema_integrity(envelope: dict[str, Any]) -> None:
+                 f"({type(claim['value']).__name__}) — failed/blocked claims must have value=None"
+             )
+ 
++        # 8. not_available means no data exists; a confidence score for it is meaningless.
++        if avail == "not_available" and claim.get("confidence") is not None:
++            violations.append(
++                f"claim '{field_name}': availability='not_available' must have confidence=None, "
++                f"got {claim.get('confidence')}"
++            )
++
+     if violations:
+         raise ClaimSchemaError(
+             f"Claim schema integrity check failed ({len(violations)} violation(s)):\n"
+@@ -167,6 +175,26 @@ OBSERVATION_CLAIM_FIELDS = {
+     "prior_year_financials": "prior_year_financials",
+ }
+ 
++CONTACT_CLAIM_FIELDS = ("phones", "emails", "website_addresses", "social_profiles")
++
++# Every envelope carries exactly these claims, in this order. A field with no data
++# is emitted as availability="not_available", never omitted.
++CLAIM_FIELD_ORDER: tuple[str, ...] = (
++    tuple(field for field, _ in REGISTRY_CLAIM_FIELDS)
++    + ("official_website",)
++    + CONTACT_CLAIM_FIELDS
++    + MODULE_CLAIM_FIELDS
++    + tuple(dict.fromkeys(OBSERVATION_CLAIM_FIELDS.values()))
++)
++
++PUBLIC_TOP_LEVEL_KEYS = (
++    "schema_version", "organisation_number", "run", "modules",
++    "claims", "evidence", "changes", "errors", "operations",
++)
++PUBLIC_RUN_KEYS = ("run_id", "started_at", "completed_at", "terminal_status")
++# Evidence carries provenance only. Values live in claims, nowhere else.
++PUBLIC_EVIDENCE_KEYS = ("id", "source_url", "source_class", "retrieved_at", "content_sha256", "claim_span")
++
+ 
+ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = None, previous_envelope: dict[str, Any] | None = None) -> dict[str, Any]:
+     profile = row.get("profile") if isinstance(row.get("profile"), dict) else row
+@@ -176,6 +204,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+     evidence_items: list[dict[str, Any]] = []
+     errors: list[dict[str, str]] = []
+     evidence_ids: dict[str, str] = {}
++    seen_observation_fields: set[str] = set()
+ 
+     def add_evidence(
+         key: str,
+@@ -183,11 +212,10 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+         *,
+         claim_span: str,
+         availability: str,
+-        value: Any = None,
+     ) -> str:
+         if key in evidence_ids:
+             return evidence_ids[key]
+-        item_id = f"ev-{len(evidence_items) + 1}"
++        item_id = f"ev-{organisation_number}-{len(evidence_items)}"
+         evidence_ids[key] = item_id
+         source_class = str(record.get("source_class") or record.get("source_type") or "unknown")
+         if source_class in {"registry_linked_company_website", "company_site"}:
+@@ -197,13 +225,12 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+             "source_url": str(record.get("source_url") or ""),
+             "source_class": source_class,
+             "retrieved_at": str(record.get("retrieved_at") or ""),
+-            "content_sha256": record.get("content_sha256") or "",
++            "content_sha256": record.get("content_sha256") or None,
+             "claim_span": claim_span[:400],
++            # Internal only: read by the integrity assertions, stripped before output.
+             "module": str(record.get("field") or key),
+             "status": availability,
+         }
+-        if value is not None:
+-            item["value"] = value
+         evidence_items.append(item)
+         return item_id
+ 
+@@ -215,7 +242,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+             registry_span = _claim_span(profile, registry)
+             registry_id = add_evidence(
+                 "registry_live", registry, claim_span=registry_span,
+-                availability=availability, value=registry.get("value"),
++                availability=availability,
+             )
+             for field, path in REGISTRY_CLAIM_FIELDS:
+                 claims.append(_claim(
+@@ -225,7 +252,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+             _append_error(errors, "registry_live", registry, availability)
+ 
+     website_record = records.get("website") if isinstance(records.get("website"), dict) else None
+-    website_claim, website_error, website_evidence_value = _website_claim(registry_value, website_record)
++    website_claim, website_error, _ = _website_claim(registry_value, website_record)
+     if website_claim:
+         website_evidence = website_record or registry
+         if website_evidence:
+@@ -235,7 +262,6 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+                 website_evidence,
+                 claim_span=_claim_span(profile, website_evidence),
+                 availability=website_availability,
+-                value=website_evidence_value,
+             )
+             website_claim["evidence_ids"] = [website_id]
+         claims.append(website_claim)
+@@ -261,7 +287,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+         value = record.get("value") if availability in {"available", "not_available"} else None
+         evidence_id = add_evidence(
+             field, record, claim_span=_claim_span(profile, record),
+-            availability=availability, value=value,
++            availability=availability,
+         )
+         claims.append(_claim(field, value, availability, _confidence(availability, official=True), [evidence_id]))
+         _append_error(errors, field, record, availability)
+@@ -271,8 +297,9 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+             continue
+         signal = str(observation.get("signal_type") or observation.get("field") or "")
+         field = OBSERVATION_CLAIM_FIELDS.get(signal)
+-        if not field:
++        if not field or field in seen_observation_fields:
+             continue
++        seen_observation_fields.add(field)
+         value = observation.get("metrics")
+         availability = _observation_availability(field, value)
+         record = {
+@@ -289,27 +316,12 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+             record,
+             claim_span=str(observation.get("evidence_span") or _claim_span(profile, record)),
+             availability=availability,
+-            value=value,
+         )
+         claims.append(_claim(field, value, availability, _confidence(availability), [evidence_id]))
+ 
+-    # Build the operations block.  When telemetry metrics are supplied by the
+-    # caller (e.g. from run_agent.py), use them for requests/runtime.  When
+-    # they are not (e.g. build_output_contract.py path), derive what we can
+-    # from the row's modules dict and evidence records.
+-    if metrics:
+-        ops = _operations(metrics)
+-        # Supplement with module-level detail derived from the row when present.
+-        row_ops = _derive_operations_from_row(row, profile)
+-        for key in ("successful_modules", "failed_modules", "not_found_modules",
+-                    "pages_crawled", "pages_failed", "retried_module_attempts"):
+-            if key in row_ops:
+-                ops.setdefault(key, row_ops[key])
+-        # Use derived cost when telemetry doesn't carry it.
+-        if not ops.get("third_party_cost_usd"):
+-            ops["third_party_cost_usd"] = row_ops.get("third_party_cost_usd", 0)
+-    else:
+-        ops = _derive_operations_from_row(row, profile)
++    claims = _complete_claims(claims)
++    modules = module_states(profile)
++    ops = _operations(metrics, profile)
+ 
+     # Compute changes[] by comparing current normalized claims against the
+     # previous envelope's normalized claims.  When no previous envelope is
+@@ -329,13 +341,15 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+         computed_changes = []
+ 
+     envelope = {
++        "schema_version": SCHEMA_VERSION,
+         "organisation_number": organisation_number,
+         "run": {
+             "run_id": str(row.get("run_id") or ""),
+             "started_at": str(row.get("started_at") or ""),
+             "completed_at": str(row.get("completed_at") or ""),
+-            "terminal_status": _terminal_status(row),
++            "terminal_status": derive_terminal_status(modules),
+         },
++        "modules": modules,
+         "claims": claims,
+         "evidence": evidence_items,
+         "changes": computed_changes,
+@@ -344,9 +358,60 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+     }
+     assert_evidence_integrity(envelope)
+     assert_claim_schema_integrity(envelope)
++    envelope["evidence"] = [{key: item[key] for key in PUBLIC_EVIDENCE_KEYS} for item in evidence_items]
+     return envelope
+ 
+ 
++def _complete_claims(claims: list[dict[str, Any]], *, missing_availability: str = "not_available") -> list[dict[str, Any]]:
++    """Return exactly CLAIM_FIELD_ORDER, one claim per field, filling gaps explicitly."""
++    by_field: dict[str, dict[str, Any]] = {}
++    for claim in claims:
++        by_field.setdefault(claim["field"], claim)
++    ordered = [
++        by_field.pop(field, None)
++        or _claim(field, None, missing_availability, _confidence(missing_availability), [])
++        for field in CLAIM_FIELD_ORDER
++    ]
++    # Unknown fields stay visible so the validator can flag them.
++    ordered.extend(by_field.values())
++    return ordered
++
++
++def conversion_failure_envelope(row: dict[str, Any], error: Exception) -> dict[str, Any]:
++    """Schema-conformant envelope for a row that could not be converted.
++
++    Claims are `failed`, never silently absent, and the error is recorded.
++    """
++    profile = row.get("profile") if isinstance(row.get("profile"), dict) else row
++    organisation_number = str(profile.get("organisation_number") or row.get("organisation_number") or "")
++    try:
++        modules = module_states(profile)
++    except Exception:
++        # The profile itself is unreadable (for example an unknown evidence status).
++        modules = {key: {"state": "source_error", "retry_count": 0} for key in MODULE_KEYS}
++    return {
++        "schema_version": SCHEMA_VERSION,
++        "organisation_number": organisation_number,
++        "run": {
++            "run_id": str(row.get("run_id") or ""),
++            "started_at": str(row.get("started_at") or ""),
++            "completed_at": str(row.get("completed_at") or ""),
++            "terminal_status": "failed",
++        },
++        "modules": modules,
++        "claims": _complete_claims([], missing_availability="failed"),
++        "evidence": [],
++        "changes": [],
++        "errors": [{
++            "field": "envelope",
++            "module": "output_contract",
++            "error_type": "conversion_failed",
++            "message": f"{type(error).__name__}: {str(error)[:240]}",
++        }],
++        "operations": _operations(None, profile),
++    }
++
++
+ def _availability(record: dict[str, Any], *, field: str | None = None) -> str | None:
+     status = record.get("status")
+     if status == "not_fetched":
+@@ -397,7 +462,7 @@ def _website_claim(
+     if registered_site:
+         return _claim("official_website", registered_site, "available", 0.99, []), None, registry_value
+     if registry_value:
+-        return _claim("official_website", None, "not_available", 0.8, []), None, registry_value
++        return _claim("official_website", None, "not_available", None, []), None, registry_value
+     return None, None, None
+ 
+ 
+@@ -432,7 +497,7 @@ def _claim(
+     field: str,
+     value: Any,
+     availability: str,
+-    confidence: float,
++    confidence: float | None,
+     evidence_ids: list[str],
+ ) -> dict[str, Any]:
+     if availability not in ALLOWED_AVAILABILITY:
+@@ -468,7 +533,7 @@ def _claim_span(profile: dict[str, Any], record: dict[str, Any]) -> str:
+     return ". ".join(parts)[:400]
+ 
+ 
+-def _confidence(availability: str, *, identity_score: Any = None, official: bool = False) -> float:
++def _confidence(availability: str, *, identity_score: Any = None, official: bool = False) -> float | None:
+     if availability == "failed":
+         return 0.0
+     if availability == "ambiguous":
+@@ -481,7 +546,8 @@ def _confidence(availability: str, *, identity_score: Any = None, official: bool
+     if availability == "not_applicable":
+         return 1.0
+     if availability == "not_available":
+-        return 0.8
++        # No data exists, so there is nothing to be confident about.
++        return None
+     if official:
+         return 0.99
+     try:
+@@ -501,133 +567,40 @@ def _nested_get(value: dict[str, Any], path: str | tuple[str, ...]) -> Any:
+     return current
+ 
+ 
+-def _terminal_status(row: dict[str, Any]) -> str:
+-    state = str(row.get("state") or "")
+-    if state == "complete":
+-        return "completed"
+-    if state.startswith("blocked"):
+-        return "blocked"
+-    return "failed" if state else "completed"
+-
+-
+-def _operations(metrics: dict[str, Any] | None) -> dict[str, Any]:
+-    """Build the operations block from telemetry metrics when available.
++def _operations(metrics: dict[str, Any] | None, profile: dict[str, Any]) -> dict[str, Any]:
++    """requests / runtime_ms / third_party_cost_usd, always the same three keys.
+ 
+-    When telemetry metrics are passed (from aggregate_company_metrics in
+-    telemetry.py) the three core fields are populated from them.  When not,
+-    the caller is expected to have already called _derive_operations_from_row()
+-    and passed its result here via the metrics parameter.
++    Telemetry supplies requests and runtime when given. Without telemetry they are
++    0, which is honest: nothing is fabricated. Cost falls back to the cost_usd
++    recorded on discovery evidence.
+     """
++    cost = _third_party_cost(profile)
+     if not metrics:
+-        return {"requests": 0, "runtime_ms": 0, "third_party_cost_usd": 0}
++        return {"requests": 0, "runtime_ms": 0, "third_party_cost_usd": cost}
+     runtime = int(metrics.get("wall_clock_duration_ms") or 0)
+     if runtime <= 0:
+         runtime = int(metrics.get("sum_request_duration_ms") or metrics.get("duration_ms") or 0)
+     return {
+         "requests": int(metrics.get("api_request_count") or 0),
+         "runtime_ms": runtime,
+-        "third_party_cost_usd": float(metrics.get("third_party_cost_usd") or 0),
++        "third_party_cost_usd": float(metrics.get("third_party_cost_usd") or 0) or cost,
+     }
+ 
+ 
+-# Module states that map to "completed successfully" (clean terminal states).
+-_MODULE_SUCCESS_STATES = frozenset({"complete", "not_applicable", "not_found"})
+-# Module states that indicate an actual failure / retrieval error.
+-_MODULE_FAILED_STATES = frozenset({
+-    "source_error", "submission_error", "budget_exhausted",
+-    "blocked_policy", "blocked_robots",
+-})
+-# Module states where the resource was simply absent (clean, not an error).
+-_MODULE_NOT_FOUND_STATES = frozenset({"not_found"})
+-
+-
+-def _derive_operations_from_row(row: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
+-    """Derive best-effort operations metadata from the raw row when telemetry
+-    metrics are not available (the common path through build_output_contract.py).
+-
+-    Sources used (read-only; no mutation of extraction data):
+-    - ``row["modules"]``  – {module: {state, retry_count, final_timestamp}}
+-    - profile evidence records – for cost_usd (discovery) and pages (website)
+-
+-    Nothing is fabricated.  Values that cannot be derived reliably are set to
+-    0 rather than guessed, and optional fields are omitted when empty.
+-    """
+-    modules: dict[str, Any] = row.get("modules") or {}
+-    records: dict[str, Any] = profile.get("evidence") or {}
+-
+-    successful: list[str] = []
+-    failed: list[str] = []
+-    not_found: list[str] = []
+-    total_retries: int = 0
+-
+-    for mod_name, mod_info in modules.items():
+-        if not isinstance(mod_info, dict):
+-            continue
+-        state = str(mod_info.get("state") or "")
+-        retry_count = int(mod_info.get("retry_count") or 0)
+-        total_retries += retry_count
+-
+-        if state in _MODULE_FAILED_STATES:
+-            failed.append(mod_name)
+-        elif state in _MODULE_NOT_FOUND_STATES:
+-            # not_found is a clean terminal state — the HTTP request succeeded
+-            not_found.append(mod_name)
+-            successful.append(mod_name)
+-        elif state in _MODULE_SUCCESS_STATES:
+-            successful.append(mod_name)
+-
+-    # -- pages_crawled / pages_failed from website evidence --
+-    pages_crawled: int = 0
+-    pages_failed: int = 0
+-    _failed_extraction_states = {
+-        "failed", "oversized", "unsupported_content",
+-        "redirect_outside_domain", "robots_blocked",
+-    }
+-    for key in ("website", "website_discovered"):
+-        rec = records.get(key)
+-        if not isinstance(rec, dict) or rec.get("status") != "available":
+-            continue
+-        val = rec.get("value") if isinstance(rec.get("value"), dict) else {}
+-        for page in val.get("pages") or []:
+-            if not isinstance(page, dict):
+-                continue
+-            if page.get("extraction_state") in _failed_extraction_states or page.get("errors"):
+-                pages_failed += 1
+-            else:
+-                pages_crawled += 1
+-
+-    # -- third_party_cost_usd from discovery provider cost fields --
+-    # BRREG (official registry data) is free.  Discovery providers (Exa, Tavily)
+-    # write a cost_usd value into the website evidence record value dict.
+-    third_party_cost: float = 0.0
++def _third_party_cost(profile: dict[str, Any]) -> float:
++    """BRREG is free. Discovery providers write cost_usd into their evidence value."""
++    records = profile.get("evidence") if isinstance(profile.get("evidence"), dict) else {}
++    total = 0.0
+     for key in ("website", "website_discovered", "website_discovery"):
+-        rec = records.get(key)
+-        if not isinstance(rec, dict):
++        record = records.get(key)
++        if not isinstance(record, dict):
+             continue
+-        val = rec.get("value") if isinstance(rec.get("value"), dict) else {}
++        value = record.get("value") if isinstance(record.get("value"), dict) else {}
+         try:
+-            third_party_cost += float(val.get("cost_usd") or 0.0)
++            total += float(value.get("cost_usd") or 0.0)
+         except (TypeError, ValueError):
+             pass
+-
+-    ops: dict[str, Any] = {
+-        "requests": 0,            # not derivable without telemetry log; 0 is honest
+-        "runtime_ms": 0,           # not derivable without telemetry log; 0 is honest
+-        "third_party_cost_usd": round(third_party_cost, 6),
+-    }
+-
+-    if modules:
+-        ops["successful_modules"] = sorted(set(successful))
+-        ops["failed_modules"] = sorted(set(failed))
+-        ops["not_found_modules"] = sorted(set(not_found))
+-        if total_retries:
+-            ops["retried_module_attempts"] = total_retries
+-
+-    if pages_crawled or pages_failed:
+-        ops["pages_crawled"] = pages_crawled
+-        ops["pages_failed"] = pages_failed
+-
+-    return ops
++    return round(total, 6)
+ 
+ 
+ # ---------------------------------------------------------------------------
+@@ -675,7 +648,6 @@ def _website_contact_claims(
+             website_rec,
+             claim_span=_claim_span(profile, website_rec),
+             availability=avail,
+-            value=website_value if crawled else None,
+         )
+     else:
+         ev_id = evidence_ids_map[website_key]
+diff --git a/src/norway_company_agent/vocabulary.py b/src/norway_company_agent/vocabulary.py
+new file mode 100644
+index 0000000..555b47c
+--- /dev/null
++++ b/src/norway_company_agent/vocabulary.py
+@@ -0,0 +1,144 @@
++"""Single source of truth for the envelope vocabulary (Phase 3).
++
++Everything that names a state, a status, a module key or the schema version is
++defined here and imported everywhere else. Nothing in the pipeline maps one
++vocabulary onto another: the module state IS the evidence status.
++"""
++from __future__ import annotations
++
++from typing import Any
++
++SCHEMA_VERSION = "1.0"
++
++# One enum for evidence status AND module state. Identical to evidence.EvidenceStatus.
++MODULE_STATES: tuple[str, ...] = (
++    "available",
++    "not_found",
++    "not_applicable",
++    "blocked",
++    "source_error",
++    "not_fetched",
++)
++
++# A blocked module always carries one of these.
++BLOCKED_REASONS: tuple[str, ...] = ("robots", "policy")
++
++TERMINAL_STATUSES: tuple[str, ...] = ("completed", "completed_with_gaps", "failed")
++
++# Fixed module keys. Every envelope emits exactly these, in this order.
++MODULE_KEYS: tuple[str, ...] = (
++    "registry",
++    "registry_live",
++    "financials",
++    "financial_history",
++    "roles",
++    "group",
++    "locations",
++    "accounting_obligation",
++    "website",
++    "website_discovery",
++    "website_discovered",
++)
++
++# Official sources (BRREG plus the rule-based assessment). A source_error here
++# after retries means the company record is broken: terminal_status = failed.
++REQUIRED_MODULES: tuple[str, ...] = (
++    "registry_live",
++    "financials",
++    "financial_history",
++    "roles",
++    "group",
++    "locations",
++    "accounting_obligation",
++)
++
++# Modules that must be available (or not_applicable) for a gap-free record.
++# website is third-party: it can leave a gap but cannot make the record failed.
++COVERAGE_MODULES: tuple[str, ...] = REQUIRED_MODULES + ("website",)
++
++_GAP_STATES = frozenset({"not_found", "blocked", "not_fetched"})
++
++
++class UnknownModuleStatusError(ValueError):
++    """An evidence record carries a status outside MODULE_STATES."""
++
++
++def module_state(record: dict[str, Any] | None, *, module: str = "") -> dict[str, Any]:
++    """Return {state, retry_count[, reason]} for one evidence record.
++
++    A missing record is `not_fetched`. An unknown status raises; it is never
++    mapped to anything.
++    """
++    if not isinstance(record, dict):
++        return {"state": "not_fetched", "retry_count": 0}
++    status = record.get("status")
++    if status not in MODULE_STATES:
++        raise UnknownModuleStatusError(
++            f"module {module or record.get('field')!r}: unknown evidence status {status!r}; "
++            f"allowed: {list(MODULE_STATES)}"
++        )
++    state: dict[str, Any] = {"state": status, "retry_count": int(record.get("retry_count") or 0)}
++    if status == "blocked":
++        note = str(record.get("note") or "").casefold()
++        state["reason"] = "robots" if "robot" in note else "policy"
++    return state
++
++
++def module_states(profile: dict[str, Any]) -> dict[str, dict[str, Any]]:
++    """Uniform module states for one profile: always exactly MODULE_KEYS."""
++    records = profile.get("evidence") if isinstance(profile.get("evidence"), dict) else {}
++    states: dict[str, dict[str, Any]] = {}
++    for key in MODULE_KEYS:
++        record = records.get(key)
++        if record is None and key == "website_discovered" and records.get("website_discovery") is not None:
++            # Discovery ran and produced no candidate page to fetch.
++            states[key] = {"state": "not_applicable", "retry_count": 0}
++        else:
++            states[key] = module_state(record, module=key)
++    return states
++
++
++def derive_terminal_status(states: dict[str, dict[str, Any]]) -> str:
++    """completed | completed_with_gaps | failed, derived from module states only."""
++    if any(states[key]["state"] == "source_error" for key in REQUIRED_MODULES):
++        return "failed"
++    for key in COVERAGE_MODULES:
++        state = states[key]["state"]
++        if state in _GAP_STATES or (key not in REQUIRED_MODULES and state == "source_error"):
++            return "completed_with_gaps"
++    return "completed"
++
++
++def profile_terminal_status(profile: dict[str, Any]) -> str:
++    return derive_terminal_status(module_states(profile))
++
++
++def batch_state(profile: dict[str, Any]) -> str:
++    """profile._batch_state, tied to terminal_status: 'failed' iff terminal_status == failed."""
++    return "failed" if profile_terminal_status(profile) == "failed" else "ok"
++
++
++def invalid_module_states(states: dict[str, Any]) -> list[str]:
++    """Violations for one `modules` mapping (used by validators)."""
++    problems: list[str] = []
++    if tuple(states) != MODULE_KEYS:
++        missing = [key for key in MODULE_KEYS if key not in states]
++        extra = [key for key in states if key not in MODULE_KEYS]
++        problems.append(f"module keys differ from fixed list (missing={missing}, extra={extra})")
++    for key, item in states.items():
++        if not isinstance(item, dict):
++            problems.append(f"module {key!r} is not an object")
++            continue
++        state = item.get("state")
++        if state not in MODULE_STATES:
++            problems.append(f"module {key!r} has state {state!r} outside {list(MODULE_STATES)}")
++        reason = item.get("reason")
++        if state == "blocked" and reason not in BLOCKED_REASONS:
++            problems.append(f"module {key!r} is blocked with reason {reason!r}; allowed {list(BLOCKED_REASONS)}")
++        if state != "blocked" and "reason" in item:
++            problems.append(f"module {key!r} has a reason but state is {state!r}")
++        retry = item.get("retry_count")
++        if not isinstance(retry, int) or isinstance(retry, bool) or retry < 0:
++            problems.append(f"module {key!r} retry_count {retry!r} is not a non-negative integer")
++    return problems
++
+diff --git a/tests/test_phase1_website_contract.py b/tests/test_phase1_website_contract.py
+index a13b3c4..0cfe914 100644
+--- a/tests/test_phase1_website_contract.py
++++ b/tests/test_phase1_website_contract.py
+@@ -1,5 +1,6 @@
++import json
+ from norway_company_agent.website import normalize_website_value
+-from norway_company_agent.output_contract import to_public_envelope
++from norway_company_agent.output_contract import PUBLIC_EVIDENCE_KEYS, to_public_envelope
+ from norway_company_agent.website_forensics import build_page_forensics
+ 
+ 
+@@ -42,7 +43,7 @@ def test_normalize_website_value_uses_phase1_contract():
+     assert normalized["discovery"]["cost_usd"] == 0.0
+ 
+ 
+-def test_public_envelope_preserves_normalized_website_evidence():
++def test_public_evidence_carries_provenance_only_and_values_live_in_claims():
+     profile = {
+         "organisation_number": "123456789",
+         "name": "Example AS",
+@@ -53,10 +54,13 @@ def test_public_envelope_preserves_normalized_website_evidence():
+                 "source_type": "registry_linked_company_website",
+                 "source_url": "https://example.no",
+                 "retrieved_at": "2026-09-30T00:00:00Z",
++                "content_sha256": "a" * 64,
+                 "value": {
+                     "final_url": "https://example.no/",
+                     "pages": [{"url": "https://example.no/about", "page_kind": "about"}],
+                     "jobs": "not_available",
++                    "phones": ["+47 22 00 00 00"],
++                    "social_links": [{"url": "https://facebook.com/example"}],
+                     "discovery": {"method": "direct", "providers_used": [], "candidates": [], "cost_usd": 0.0},
+                 },
+             }
+@@ -65,11 +69,14 @@ def test_public_envelope_preserves_normalized_website_evidence():
+ 
+     envelope = to_public_envelope({"profile": profile})
+ 
+-    website_item = next(item for item in envelope["evidence"] if item.get("module") == "website")
+-    assert website_item["status"] == "available"
+-    assert website_item["value"]["pages"][0]["page_kind"] == "about"
+-    assert website_item["value"]["jobs"] == "not_available"
+-    assert "social_links" not in website_item["value"]
++    assert envelope["evidence"], "website evidence must exist"
++    for item in envelope["evidence"]:
++        assert tuple(item) == PUBLIC_EVIDENCE_KEYS
++        assert item["id"].startswith("ev-123456789-")
++    claims = {claim["field"]: claim for claim in envelope["claims"]}
++    assert claims["official_website"]["value"] == "https://example.no/"
++    assert claims["phones"]["value"] == ["+47 22 00 00 00"]
++    assert "social_links" not in json.dumps(envelope)
+ 
+ 
+ def test_page_forensics_keeps_unormalized_job_and_news_evidence():
+diff --git a/tests/test_phase3_envelope.py b/tests/test_phase3_envelope.py
+new file mode 100644
+index 0000000..ed6250c
+--- /dev/null
++++ b/tests/test_phase3_envelope.py
+@@ -0,0 +1,316 @@
++"""Phase 3: one vocabulary, claims-based public envelope, validator."""
++import copy
++import importlib.util
++import json
++from pathlib import Path
++
++import pytest
++
++from norway_company_agent.batch import terminal_envelope, validate_envelopes
++from norway_company_agent.evidence import evidence
++from norway_company_agent.output_contract import (
++    CLAIM_FIELD_ORDER,
++    PUBLIC_EVIDENCE_KEYS,
++    PUBLIC_TOP_LEVEL_KEYS,
++    ClaimSchemaError,
++    assert_claim_schema_integrity,
++    conversion_failure_envelope,
++    to_public_envelope,
++)
++from norway_company_agent.vocabulary import (
++    MODULE_KEYS,
++    MODULE_STATES,
++    REQUIRED_MODULES,
++    SCHEMA_VERSION,
++    UnknownModuleStatusError,
++    batch_state,
++    derive_terminal_status,
++    module_state,
++    module_states,
++    profile_terminal_status,
++)
++
++SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
++
++
++def _load(name):
++    spec = importlib.util.spec_from_file_location(name, SCRIPTS / f"{name}.py")
++    module = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(module)
++    return module
++
++
++validator = _load("validate_envelopes")
++builder = _load("build_output_contract")
++
++SHA = "a" * 64
++
++
++def _record(module, status="available", **kwargs):
++    kwargs.setdefault("value", {"name": "TestCo AS"} if module == "registry_live" else {})
++    kwargs.setdefault("content_sha256", SHA)
++    retry_count = kwargs.pop("retry_count", 0)
++    record = evidence(module, status, "official_test", f"https://example.test/{module}", **kwargs)
++    record["retry_count"] = retry_count
++    return record
++
++
++def _profile(org="123456789", **overrides):
++    records = {
++        module: _record(module)
++        for module in ("registry_live", "financials", "financial_history", "roles", "group", "locations", "accounting_obligation")
++    }
++    records["registry"] = _record("registry", "not_applicable")
++    records["website"] = _record("website", "available", value={
++        "final_url": "https://testco.no/", "phones": ["+47 1"], "emails": [], "addresses": [],
++        "social_profiles": [], "identity_assessment": {"publishable": True, "score": 0.95},
++    })
++    records.update(overrides)
++    return {"organisation_number": org, "name": "TestCo AS", "evidence": records}
++
++
++def _envelope(profile=None, run_id="run-1"):
++    fat = terminal_envelope(
++        profile or _profile(), run_id=run_id,
++        started_at="2026-10-09T06:00:00Z", completed_at="2026-10-09T06:05:00Z",
++    )
++    return to_public_envelope(fat)
++
++
++# --- vocabulary ------------------------------------------------------------
++
++def test_module_state_is_the_evidence_status_verbatim():
++    for status in MODULE_STATES:
++        assert module_state({"status": status, "note": "x"})["state"] == status
++
++
++def test_unknown_status_raises_instead_of_mapping():
++    for bad in ("complete", "submission_error", "blocked_robots", "ok", None):
++        with pytest.raises(UnknownModuleStatusError):
++            module_state({"status": bad}, module="roles")
++
++
++def test_blocked_carries_reason():
++    assert module_state({"status": "blocked", "note": "robots.txt disallows this user agent"})["reason"] == "robots"
++    assert module_state({"status": "blocked", "note": "Homepage exceeds byte limit"})["reason"] == "policy"
++    assert "reason" not in module_state({"status": "not_found"})
++
++
++def test_module_states_always_the_fixed_keys_in_order():
++    for profile in (_profile(), {"organisation_number": "1", "evidence": {}}, {"organisation_number": "1"}):
++        assert tuple(module_states(profile)) == MODULE_KEYS
++    assert len(MODULE_KEYS) == len(set(MODULE_KEYS))
++
++
++def test_missing_module_is_not_fetched_and_discovered_is_not_applicable_after_discovery():
++    states = module_states(_profile())
++    assert states["website_discovery"]["state"] == "not_fetched"
++    assert states["website_discovered"]["state"] == "not_fetched"
++    discovered = module_states(_profile(website_discovery=_record("website_discovery", "not_found")))
++    assert discovered["website_discovery"]["state"] == "not_found"
++    assert discovered["website_discovered"]["state"] == "not_applicable"
++
++
++# --- terminal_status -------------------------------------------------------
++
++def test_completed_when_required_modules_available_or_not_applicable():
++    profile = _profile(group=_record("group", "not_applicable"))
++    assert profile_terminal_status(profile) == "completed"
++    assert batch_state(profile) == "ok"
++
++
++@pytest.mark.parametrize("module,status", [("group", "not_found"), ("roles", "blocked"), ("website", "not_found"), ("website", "source_error")])
++def test_gap_states_give_completed_with_gaps(module, status):
++    assert profile_terminal_status(_profile(**{module: _record(module, status, note="x")})) == "completed_with_gaps"
++
++
++def test_missing_required_module_is_a_gap_not_a_failure():
++    profile = _profile()
++    del profile["evidence"]["roles"]
++    assert profile_terminal_status(profile) == "completed_with_gaps"
++
++
++@pytest.mark.parametrize("module", REQUIRED_MODULES)
++def test_required_source_error_is_failed_and_sets_batch_state(module):
++    profile = _profile(**{module: _record(module, "source_error", note="boom", retry_count=2)})
++    assert profile_terminal_status(profile) == "failed"
++    assert batch_state(profile) == "failed"
++
++
++def test_optional_module_source_error_does_not_fail_the_company():
++    profile = _profile(website_discovered=_record("website_discovered", "source_error"))
++    assert profile_terminal_status(profile) == "completed"
++
++
++# --- fat envelope and validate_envelopes -----------------------------------
++
++def test_fat_envelope_uses_fixed_modules_and_one_vocabulary():
++    fat = terminal_envelope(_profile(), run_id="r", started_at="a", completed_at="b")
++    assert tuple(fat["modules"]) == MODULE_KEYS
++    assert fat["schema_version"] == SCHEMA_VERSION
++    assert "state" not in fat and fat["terminal_status"] == "completed"
++    assert {item["state"] for item in fat["modules"].values()} <= set(MODULE_STATES)
++
++
++def test_validate_envelopes_rejects_old_vocabulary_and_unknown_values():
++    good = _envelope()
++    assert validate_envelopes([good], 1)["passed"]
++    old = copy.deepcopy(good)
++    old["modules"]["roles"]["state"] = "complete"
++    assert not validate_envelopes([old], 1)["passed"]
++    unknown = copy.deepcopy(good)
++    unknown["run"]["terminal_status"] = "complete"
++    assert not validate_envelopes([unknown], 1)["checks"]["all_terminal_statuses_valid"]
++    blocked = copy.deepcopy(good)
++    blocked["modules"]["website"] = {"state": "blocked", "retry_count": 0}
++    assert not validate_envelopes([blocked], 1)["passed"]
++    assert not validate_envelopes([good, good], 2)["checks"]["unique_organisation_numbers"]
++
++
++# --- public envelope -------------------------------------------------------
++
++def test_public_envelope_shape():
++    envelope = _envelope()
++    assert tuple(envelope) == PUBLIC_TOP_LEVEL_KEYS
++    assert envelope["schema_version"] == "1.0"
++    assert "profile" not in envelope
++    assert tuple(envelope["modules"]) == MODULE_KEYS
++    assert envelope["run"]["terminal_status"] == "completed"
++    assert set(envelope["operations"]) == {"requests", "runtime_ms", "third_party_cost_usd"}
++
++
++def test_evidence_ids_are_org_scoped_zero_based_and_carry_no_value():
++    a, b = _envelope(_profile("111111111")), _envelope(_profile("222222222"))
++    for envelope, org in ((a, "111111111"), (b, "222222222")):
++        ids = [item["id"] for item in envelope["evidence"]]
++        assert ids == [f"ev-{org}-{n}" for n in range(len(ids))]
++        for item in envelope["evidence"]:
++            assert tuple(item) == PUBLIC_EVIDENCE_KEYS
++    assert not {i["id"] for i in a["evidence"]} & {i["id"] for i in b["evidence"]}
++    assert "TestCo AS" in json.dumps(a["claims"])
++    assert "value" not in json.dumps(a["evidence"])
++
++
++def test_claim_fields_identical_for_every_company_even_with_no_data():
++    full = _envelope()
++    bare = _envelope({"organisation_number": "999999999", "evidence": {}})
++    expected = list(CLAIM_FIELD_ORDER)
++    assert [c["field"] for c in full["claims"]] == expected
++    assert [c["field"] for c in bare["claims"]] == expected
++    assert bare["evidence"] == []
++    assert {c["availability"] for c in bare["claims"]} == {"not_available"}
++
++
++def test_not_available_claims_have_null_confidence():
++    envelope = _envelope(_profile(group=_record("group", "not_found")))
++    missing = [c for c in envelope["claims"] if c["availability"] == "not_available"]
++    assert missing and all(c["confidence"] is None for c in missing)
++    with pytest.raises(ClaimSchemaError):
++        assert_claim_schema_integrity({"claims": [
++            {"field": "x", "value": None, "availability": "not_available", "confidence": 0.8, "evidence_ids": []}
++        ]})
++
++
++def test_two_observations_for_one_field_yield_one_claim():
++    profile = _profile()
++    profile["observations"] = [
++        {"id": "o1", "signal_type": "workforce_snapshot", "source_url": "https://a", "metrics": {"workforce_value": 5}, "content_sha256": SHA},
++        {"id": "o2", "signal_type": "workforce", "source_url": "https://b", "metrics": {"workforce_value": 9}, "content_sha256": SHA},
++    ]
++    claims = [c for c in _envelope(profile)["claims"] if c["field"] == "workforce"]
++    assert len(claims) == 1 and claims[0]["value"] == {"workforce_value": 5}
++
++
++def test_conversion_failure_envelope_is_conformant_and_visible():
++    envelope = conversion_failure_envelope({"profile": _profile(roles=_record("roles", "complete"))}, ValueError("boom"))
++    assert tuple(envelope) == PUBLIC_TOP_LEVEL_KEYS
++    assert envelope["run"]["terminal_status"] == "failed"
++    assert {c["availability"] for c in envelope["claims"]} == {"failed"}
++    assert envelope["errors"][0]["error_type"] == "conversion_failed"
++
++
++# --- builder ---------------------------------------------------------------
++
++def test_builder_formats_and_public_input_rejection():
++    args = dict(run_id="r", started_at="2026-10-09T06:00:00Z", completed_at="2026-10-09T06:01:00Z", observations=[])
++    public = builder.build_envelope(_profile(), envelope_format="public", **args)
++    fat = builder.build_envelope(_profile(), envelope_format="fat", **args)
++    assert "profile" not in public and "profile" in fat
++    assert tuple(fat["modules"]) == MODULE_KEYS and fat["terminal_status"] == public["run"]["terminal_status"]
++    assert builder.is_public_envelope(public) and not builder.is_public_envelope(fat)
++    with pytest.raises(ValueError):
++        builder.build_envelope(_profile(), envelope_format="nope", **args)
++
++
++def test_builder_rebuilds_old_fat_envelope_modules_from_profile():
++    old_fat = {"run_id": "old", "state": "complete", "modules": {"roles": {"state": "complete"}}, "profile": _profile()}
++    rebuilt = builder.build_envelope(old_fat, run_id="", started_at="", completed_at="", observations=[], envelope_format="fat")
++    assert rebuilt["modules"]["roles"]["state"] == "available" and rebuilt["run_id"] == "old"
++
++
++# --- validator -------------------------------------------------------------
++
++def _rows(n=2):
++    return [_envelope(_profile(f"12345678{i}")) for i in range(n)]
++
++
++def _failing(rows, **kwargs):
++    results = validator.validate(rows, **kwargs)
++    return {name for name, violations in results.items() if violations}
++
++
++def test_validator_passes_on_clean_envelopes():
++    assert _failing(_rows(), run_id="run-1", expected_count=2) == set()
++
++
++def test_validator_has_one_check_per_name():
++    assert set(validator.validate(_rows())) == set(validator.CHECK_NAMES)
++
++
++@pytest.mark.parametrize("mutate,check", [
++    (lambda r: r[0].update(extra=1), "01_row_keysets_identical"),
++    (lambda r: r[0]["modules"].pop("website_discovered"), "01_row_keysets_identical"),
++    (lambda r: r[0]["claims"].pop(), "02_claim_keysets_and_fields_identical"),
++    (lambda r: r[0]["claims"][0].pop("confidence"), "02_claim_keysets_and_fields_identical"),
++    (lambda r: r[0]["claims"][0]["evidence_ids"].append("ev-123456780-99"), "03_evidence_ids_resolve"),
++    (lambda r: r[0]["claims"][0].update(evidence_ids=[]), "04_available_claims_have_evidence"),
++    (lambda r: r[0]["evidence"].append({**r[0]["evidence"][0], "id": "ev-123456780-77"}), "05_no_orphan_evidence"),
++    (lambda r: r[0]["evidence"][0].update(content_sha256="xyz"), "06_content_sha256_valid"),
++    (lambda r: r[0]["evidence"][0].update(content_sha256=""), "06_content_sha256_valid"),
++    (lambda r: r[0]["evidence"][0].update(content_sha256=None), "06_content_sha256_valid"),
++    (lambda r: r[1]["evidence"][0].update(id="ev-123456780-0"), "07_evidence_id_matches_org"),
++    (lambda r: r[0]["modules"]["roles"].update(state="complete"), "08_enum_values_allowed"),
++    (lambda r: r[0]["modules"]["roles"].update(state="blocked"), "08_enum_values_allowed"),
++    (lambda r: r[0]["claims"][0].update(availability="maybe"), "08_enum_values_allowed"),
++    (lambda r: r[0].update(schema_version="2.0"), "08_enum_values_allowed"),
++    (lambda r: r[0]["run"].update(terminal_status="complete"), "08_enum_values_allowed"),
++    (lambda r: r[1].update(organisation_number=r[0]["organisation_number"]), "09_org_numbers_unique_9_digit"),
++    (lambda r: r[0].update(organisation_number="12345"), "09_org_numbers_unique_9_digit"),
++    (lambda r: r[0]["run"].update(completed_at="2026-10-09T05:00:00Z"), "10_completed_not_before_started"),
++    (lambda r: r[0]["run"].update(started_at=""), "10_completed_not_before_started"),
++    (lambda r: r[0]["run"].update(run_id="other"), "11_single_run_id"),
++    (lambda r: r[0]["run"].update(terminal_status="completed_with_gaps"), "12_terminal_status_consistent_with_modules"),
++    (lambda r: r.pop(), "13_expected_count"),
++])
++def test_validator_catches_each_violation(mutate, check):
++    rows = _rows()
++    mutate(rows)
++    assert check in _failing(rows, run_id="run-1", expected_count=2)
++
++
++def test_validator_flags_conversion_failures():
++    rows = _rows()
++    rows[0] = conversion_failure_envelope({"profile": _profile("123456780", roles=_record("roles", "complete"))}, ValueError("x"))
++    assert "14_no_conversion_failures" in _failing(rows)
++
++
++def test_report_has_run_id_and_envelope_sha256(tmp_path):
++    path = tmp_path / "envelopes.jsonl"
++    path.write_text("\n".join(json.dumps(r) for r in _rows()) + "\n", encoding="utf-8")
++    rows, problems = validator.read_rows(path)
++    report = validator.build_report(path, rows, problems, run_id="run-1", expected_count=2)
++    assert report["passed"] and report["run_id"] == "run-1" and report["schema_version"] == "1.0"
++    assert report["envelopes_sha256"] == validator.sha256_file(path) and len(report["envelopes_sha256"]) == 64
++    path.write_text(path.read_text(encoding="utf-8") + "{not json\n", encoding="utf-8")
++    rows, problems = validator.read_rows(path)
++    assert not validator.build_report(path, rows, problems, run_id="run-1", expected_count=2)["passed"]

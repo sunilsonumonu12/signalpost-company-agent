@@ -1,0 +1,298 @@
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -6,3 +6,10 @@
+ tldextract>=5,<6
+ trafilatura>=2,<3
+ pypdf>=5,<7
++
++# Required for stages 3-4: multi-page crawl and HTML/XML parsing.
++scrapy==2.19.0
++lxml==6.1.3
++
++# Optional: psutil is only needed for process/resource monitoring helpers.
++# psutil>=7,<8
+--- a/run.bat
++++ b/run.bat
+@@ -1,7 +1,12 @@
+ @echo off
++cd /d "%~dp0"
+ echo ============================================
+ echo   SignalPost Hackathon - RUN START
+-echo   Companies file: 1000-companies.jsonl
++if "%*"=="" (
++    echo   Companies file: entry-companies.jsonl (run.py default)
++) else (
++    echo   Arguments: %*
++)
+ echo ============================================
+ echo.
+ 
+@@ -14,20 +19,12 @@
+     exit /b 1
+ )
+ 
+-REM Check input file exists
+-if not exist "1000-companies.jsonl" (
+-    echo ❌ ERROR: 1000-companies.jsonl file nahi mila!
+-    echo    File ko project root folder me rakho.
+-    pause
+-    exit /b 1
+-)
+-
+ echo ⏳ Run start ho gaya... Progress har 30 seconds me dikhega.
+ echo    Final output yaha milega: result\envelopes.jsonl
+ echo.
+ 
+-REM Run the project with default 1000 companies file
+-python run.py --organisations 1000-companies.jsonl
++REM Forward all arguments; with no arguments run.py uses its own default input.
++python run.py %*
+ 
+ REM Show exit status
+ if errorlevel 1 (
+--- a/run.py
++++ b/run.py
+@@ -19,6 +19,7 @@
+ WORK_DIR = PROJECT_ROOT / "out" / "latest-run"
+ RESULT_FILE = PROJECT_ROOT / "result" / "envelopes.jsonl"
+ sys.path.insert(0, str(PROJECT_ROOT / "src"))
++from norway_company_agent.batch import read_organisation_inputs  # noqa: E402
+ from norway_company_agent.env import load_local_env  # noqa: E402
+ 
+ 
+@@ -43,11 +44,8 @@
+ 
+ 
+ def count_organisations(path: Path) -> int:
+-    text = path.read_text(encoding="utf-8")
+-    if text.lstrip().startswith("["):
+-        values = json.loads(text)
+-        return len(values) if isinstance(values, list) else 0
+-    return sum(1 for line in text.splitlines() if line.strip())
++    """Count only validated, unique organisation numbers using the shared reader."""
++    return len(read_organisation_inputs(path))
+ 
+ 
+ def read_progress(path: Path) -> dict:
+@@ -154,7 +152,8 @@
+ 
+ def main() -> int:
+     parser = argparse.ArgumentParser(description="Run SignalPost and write one envelope JSONL for all organisations.")
+-    parser.add_argument("--organisations", type=Path, default=DEFAULT_INPUT)
++    parser.add_argument("--organisations", type=Path, default=DEFAULT_INPUT,
++                        help="Organisation input path (default: entry-companies.jsonl).")
+     parser.add_argument("--progress-interval", type=float, default=30.0, help="Seconds between live progress reports")
+     parser.add_argument(
+         "--source-envelopes",
+@@ -162,13 +161,13 @@
+         help="Convert an existing populated envelope JSONL without rerunning collection.",
+     )
+     parser.add_argument("--include-workforce-ocr", dest="skip_workforce_ocr", action="store_false", default=True,
+-                        help="Run annual-report OCR workforce extraction.")
++                        help="Enable annual-report OCR workforce extraction (default: disabled).")
+     parser.add_argument("--skip-workforce-ocr", dest="skip_workforce_ocr", action="store_true",
+-                        help="Skip annual-report OCR workforce extraction (default).")
++                        help="Leave annual-report OCR workforce extraction disabled (default).")
+     parser.add_argument("--include-deep-crawl", dest="skip_deep_crawl", action="store_false", default=False,
+-                        help="Enable the optional multi-page website crawl (default).")
++                        help="Enable the multi-page website crawl (default: enabled).")
+     parser.add_argument("--skip-deep-crawl", dest="skip_deep_crawl", action="store_true",
+-                        help="Skip the optional multi-page website crawl.")
++                        help="Skip the multi-page website crawl (default: disabled).")
+     args = parser.parse_args()
+     load_local_env(PROJECT_ROOT)
+     configure_tesseract_path()
+@@ -207,9 +206,12 @@
+     if not organisations.exists():
+         parser.error(f"Organisation file not found: {organisations}")
+ 
+-    expected_count = count_organisations(organisations)
++    try:
++        expected_count = count_organisations(organisations)
++    except (OSError, ValueError) as exc:
++        parser.error(f"Invalid organisation input {organisations}: {exc}")
+     if expected_count == 0:
+-        parser.error(f"Organisation file is empty: {organisations}")
++        parser.error(f"Organisation file contains no organisation numbers: {organisations}")
+     if args.progress_interval <= 0:
+         parser.error("--progress-interval must be positive")
+ 
+--- a/README.md
++++ b/README.md
+@@ -22,7 +22,7 @@
+ 
+ ### Step 2: Run the Project
+ 
+-**Windows, using the default 1000-company input:**
++**Windows, using the default `entry-companies.jsonl` input:**
+ 
+ ```bash
+ run.bat
+@@ -33,6 +33,8 @@
+ ```bash
+ python run.py --organisations 1000-companies.jsonl
+ ```
++
++`run.bat` forwards all command-line arguments to `run.py`. With no arguments, both use `entry-companies.jsonl`.
+ 
+ To include annual-report workforce OCR:
+ 
+@@ -47,6 +49,11 @@
+   python --version
+   ```
+ - **Internet Connection:** Required because the agent fetches data from company websites and online sources.
++- **Poppler (`pdftoppm`):** Required for PDF page rendering. Install Poppler and add the directory containing `pdftoppm` to `PATH`. Verify with `pdftoppm -v`.
++- **Tesseract OCR:** Required when annual-report OCR is enabled. Install Tesseract and ensure `tesseract` is on `PATH`. Verify with `tesseract --version`.
++- **Norwegian OCR language data:** Tesseract must have `nor.traineddata` installed in its `tessdata` directory. Verify with `tesseract --list-langs` and confirm that `nor` appears.
++
++The default run enables the Scrapy deep crawl and leaves annual-report OCR disabled. To enable OCR, pass `--include-workforce-ocr`.
+ 
+ ---
+ 
+@@ -95,7 +102,7 @@
+ 
+ ## 📝 Input File Format
+ 
+-The company input file can use either of these two formats.
++The company input file can use either of these two formats. The current default file, `entry-companies.jsonl`, is actually a **JSON array** despite its `.jsonl` suffix; the shared reader detects this by content. Do not treat it as one-JSON-object-per-line JSONL. The reader validates that each organisation number has nine digits and rejects duplicate numbers before the pipeline starts.
+ 
+ ### Format 1: JSON Array
+ 
+--- a/docs/CODEBASE_MAP.md
++++ b/docs/CODEBASE_MAP.md
+@@ -377,7 +377,7 @@
+ - Set by `run_agent`: `SIGNALPOST_REQUEST_LOG`, `SIGNALPOST_SNAPSHOT_DIR`, `SIGNALPOST_RUN_ID`, `SIGNALPOST_CALLER_MODULE`.
+ - Read but NOT set by `run_agent`: `SIGNALPOST_OUTPUT_DIR` (default `out/latest-run`, relative to cwd) used by `crawl_events` and `validation` for `crawl-trace.jsonl` and the quarantine file; `SIGNALPOST_CRAWL_TRACE_PATH`, `SIGNALPOST_QUARANTINE_PATH`; `TESSERACT_DIR` (run.py).
+ 
+-Python packages: those in `requirements.txt`, plus `scrapy` (required for stages 3 and 4, NOT listed), `lxml` (used as BeautifulSoup parser, not listed), `psutil` (optional, Windows peak RSS, imported lazily).
++Python packages: dependencies are declared in `requirements.txt`; `scrapy==2.19.0` is required for stages 3 and 4, `lxml==6.1.3` is used as the BeautifulSoup parser, and `psutil` remains optional for Windows peak-RSS monitoring (imported lazily).
+ 
+ System binaries for OCR: `pdftoppm` (Poppler) and `tesseract` with the Norwegian language data (`nor`). If missing, the archive connector reports a per-company error `OCR required but missing executable(s)` and continues.
+ 
+--- a/scripts/run_agent.py
++++ b/scripts/run_agent.py
+@@ -314,21 +314,6 @@
+     run_stage("claims/evidence", convert_cmd)
+     stages_run.append("claims_conversion")
+ 
+-    # 7. Offline HTML viewer -- best-effort, never blocks the submission artifact.
+-    viewer_builder = ROOT / "build_viewer.py"
+-    if viewer_builder.exists():
+-        viewer_path = output_dir / "viewer.html"
+-        ok = run_stage("output", [
+-            args.python, str(viewer_builder),
+-            "--envelopes", str(envelopes_path),
+-            "--profiles", str(profiles_path),
+-            "--output", str(viewer_path),
+-        ], optional=True)
+-        if ok:
+-            stages_run.append("viewer")
+-    else:
+-        print("Offline viewer builder not found -- skipping viewer.", file=sys.stderr)
+-
+     summary = {
+         "run_id": args.run_id,
+         "started_at": started_at,
+--- a/scripts/run_competition_batch.py
++++ b/scripts/run_competition_batch.py
+@@ -18,6 +18,7 @@
+ from norway_company_agent.batch import (  # noqa: E402
+     backfill_from_registry_live,
+     profiles_from_inputs,
++    read_organisation_inputs,
+     terminal_envelope,
+ )
+ from norway_company_agent.identity import apply_website_identity_gate  # noqa: E402
+@@ -130,35 +131,6 @@
+         print(f"AVERAGE company time: {average:.1f} sec", flush=True)
+         print(f"FASTEST company: {fastest[0]} | {fastest[1]:.1f} sec", flush=True)
+         print(f"SLOWEST company: {slowest[0]} | {slowest[1]:.1f} sec", flush=True)
+-
+-
+-def read_orgs(path: Path) -> list[str]:
+-    text = path.read_text(encoding="utf-8")
+-    stripped = text.lstrip()
+-    if path.suffix.lower() == ".json" or stripped.startswith("["):
+-        data = json.loads(text)
+-        if isinstance(data, list):
+-            return [str(item) for item in data]
+-        if isinstance(data, dict):
+-            return [str(v) for v in data.values()]
+-        return []
+-
+-    rows = []
+-    for line in path.read_text(encoding="utf-8").splitlines():
+-        line = line.strip()
+-        if not line:
+-            continue
+-        if line.startswith("{"):
+-            try:
+-                row = json.loads(line)
+-                org = row.get("organisation_number") or row.get("org") or row.get("id")
+-                if org:
+-                    rows.append(str(org))
+-            except json.JSONDecodeError:
+-                pass
+-        else:
+-            rows.append(line)
+-    return rows
+ 
+ 
+ def _build_failure_profile(organisation_number: str, modules: set[str], error_message: str) -> dict:
+@@ -305,8 +277,13 @@
+     args = p.parse_args()
+ 
+     org_file = Path(args.organisations)
+-    orgs = read_orgs(org_file)
+-    profiles = profiles_from_inputs([{"organisation_number": org} for org in orgs])
++    try:
++        organisation_records = read_organisation_inputs(org_file)
++    except (OSError, ValueError) as exc:
++        p.error(f"Invalid organisation input {org_file}: {exc}")
++    if not organisation_records:
++        p.error(f"Organisation input contains no organisation numbers: {org_file}")
++    profiles = profiles_from_inputs(organisation_records)
+     modules = {module.strip() for module in args.modules.split(",") if module.strip()}
+     progress = ProgressTracker(args.progress_file, len(profiles)) if args.progress_file else None
+     timings = CompanyTimingTracker()
+--- a/src/norway_company_agent/batch.py
++++ b/src/norway_company_agent/batch.py
+@@ -23,10 +23,19 @@
+     source = Path(path)
+     text = source.read_text(encoding="utf-8")
+     values: list[Any]
+-    if source.suffix == ".json":
++    # Some existing inputs use a .jsonl filename but contain one JSON array.
++    # Detect that by content so the shared validator accepts the current default.
++    if source.suffix.lower() == ".json" or text.lstrip().startswith("["):
+         body = json.loads(text)
+-        values = body if isinstance(body, list) else body.get("organisation_numbers", [])
+-    elif source.suffix == ".jsonl":
++        if isinstance(body, list):
++            values = body
++        elif isinstance(body, dict):
++            values = body.get("organisation_numbers", [])
++        else:
++            raise ValueError("Organisation input must be a JSON array or object")
++        if not isinstance(values, list):
++            raise ValueError("'organisation_numbers' must be a JSON array")
++    elif source.suffix.lower() == ".jsonl":
+         values = [json.loads(line) for line in text.splitlines() if line.strip()]
+     else:
+         values = [line.strip() for line in text.splitlines() if line.strip()]
+--- a/src/norway_company_agent/telemetry.py
++++ b/src/norway_company_agent/telemetry.py
+@@ -279,7 +279,12 @@
+         providers[provider]["failed"] += int(not event.get("success"))
+         providers[provider]["cache_hits"] += int(bool(event.get("cache_hit")))
+         providers[provider]["cache_misses"] += int(bool(event.get("cache_miss")))
+-    success_count = sum(1 for item in per_company.values() if item.get("status") == "completed")
++    # Gaps/errors in collected data are not processing failures. Only the explicit
++    # "failed" status is unsuccessful; the other terminal statuses count as processed.
++    success_count = sum(
++        1 for item in per_company.values()
++        if item.get("status") in {"completed", "completed_with_gaps", "completed_with_errors"}
++    )
+     failed_count = sum(1 for item in per_company.values() if item.get("status") == "failed")
+ 
+     # Step 3: build structured discovery blocks — one per provider.

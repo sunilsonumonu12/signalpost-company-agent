@@ -22,7 +22,11 @@ pip install -r requirements.txt
 
 ### Step 2: Run the Project
 
+<<<<<<< HEAD
 **Windows, using the default `entry-companies.jsonl` input:**
+=======
+**Windows, using the default 1000-company input:**
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 
 ```bash
 run.bat
@@ -34,8 +38,11 @@ Or manually specify your input file:
 python run.py --organisations 1000-companies.jsonl
 ```
 
+<<<<<<< HEAD
 `run.bat` forwards all command-line arguments to `run.py`. With no arguments, both use `entry-companies.jsonl`.
 
+=======
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 To include annual-report workforce OCR:
 
 ```bash
@@ -49,11 +56,14 @@ python run.py --organisations entry-companies.jsonl --include-workforce-ocr
   python --version
   ```
 - **Internet Connection:** Required because the agent fetches data from company websites and online sources.
+<<<<<<< HEAD
 - **Poppler (`pdftoppm`):** Required for PDF page rendering. Install Poppler and add the directory containing `pdftoppm` to `PATH`. Verify with `pdftoppm -v`.
 - **Tesseract OCR:** Required when annual-report OCR is enabled. Install Tesseract and ensure `tesseract` is on `PATH`. Verify with `tesseract --version`.
 - **Norwegian OCR language data:** Tesseract must have `nor.traineddata` installed in its `tessdata` directory. Verify with `tesseract --list-langs` and confirm that `nor` appears.
 
 The default run enables the Scrapy deep crawl and leaves annual-report OCR disabled. To enable OCR, pass `--include-workforce-ocr`.
+=======
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 
 ---
 
@@ -102,7 +112,11 @@ python run.py --source-envelopes out/latest-run/envelopes.jsonl
 
 ## 📝 Input File Format
 
+<<<<<<< HEAD
 The company input file can use either of these two formats. The current default file, `entry-companies.jsonl`, is actually a **JSON array** despite its `.jsonl` suffix; the shared reader detects this by content. Do not treat it as one-JSON-object-per-line JSONL. The reader validates that each organisation number has nine digits and rejects duplicate numbers before the pipeline starts.
+=======
+The company input file can use either of these two formats.
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 
 ### Format 1: JSON Array
 

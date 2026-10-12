@@ -1,6 +1,11 @@
+<<<<<<< HEAD
 import json
 from norway_company_agent.website import normalize_website_value
 from norway_company_agent.output_contract import PUBLIC_EVIDENCE_KEYS, to_public_envelope
+=======
+from norway_company_agent.website import normalize_website_value
+from norway_company_agent.output_contract import to_public_envelope
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 from norway_company_agent.website_forensics import build_page_forensics
 
 
@@ -43,7 +48,11 @@ def test_normalize_website_value_uses_phase1_contract():
     assert normalized["discovery"]["cost_usd"] == 0.0
 
 
+<<<<<<< HEAD
 def test_public_evidence_carries_provenance_only_and_values_live_in_claims():
+=======
+def test_public_envelope_preserves_normalized_website_evidence():
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
     profile = {
         "organisation_number": "123456789",
         "name": "Example AS",
@@ -54,13 +63,19 @@ def test_public_evidence_carries_provenance_only_and_values_live_in_claims():
                 "source_type": "registry_linked_company_website",
                 "source_url": "https://example.no",
                 "retrieved_at": "2026-09-30T00:00:00Z",
+<<<<<<< HEAD
                 "content_sha256": "a" * 64,
+=======
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
                 "value": {
                     "final_url": "https://example.no/",
                     "pages": [{"url": "https://example.no/about", "page_kind": "about"}],
                     "jobs": "not_available",
+<<<<<<< HEAD
                     "phones": ["+47 22 00 00 00"],
                     "social_links": [{"url": "https://facebook.com/example"}],
+=======
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
                     "discovery": {"method": "direct", "providers_used": [], "candidates": [], "cost_usd": 0.0},
                 },
             }
@@ -69,6 +84,7 @@ def test_public_evidence_carries_provenance_only_and_values_live_in_claims():
 
     envelope = to_public_envelope({"profile": profile})
 
+<<<<<<< HEAD
     assert envelope["evidence"], "website evidence must exist"
     for item in envelope["evidence"]:
         assert tuple(item) == PUBLIC_EVIDENCE_KEYS
@@ -77,6 +93,13 @@ def test_public_evidence_carries_provenance_only_and_values_live_in_claims():
     assert claims["official_website"]["value"] == "https://example.no/"
     assert claims["phones"]["value"] == ["+47 22 00 00 00"]
     assert "social_links" not in json.dumps(envelope)
+=======
+    website_item = next(item for item in envelope["evidence"] if item.get("module") == "website")
+    assert website_item["status"] == "available"
+    assert website_item["value"]["pages"][0]["page_kind"] == "about"
+    assert website_item["value"]["jobs"] == "not_available"
+    assert "social_links" not in website_item["value"]
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 
 
 def test_page_forensics_keeps_unormalized_job_and_news_evidence():

@@ -1,14 +1,34 @@
 {
+<<<<<<< HEAD
   "run_id": "run-20261009-060234-846931",
   "started_at": "2026-10-09T06:02:35Z",
   "completed_at": "2026-10-09T06:02:57Z",
   "stages_run": [
     "registry_batch",
+=======
+  "run_id": "run-20261006-045357-514722",
+  "started_at": "2026-10-06T04:53:57Z",
+  "completed_at": "2026-10-06T05:04:54Z",
+  "stages_run": [
+    "registry_batch",
+    "tavily_discovery",
+    "exa_discovery",
+    "deep_crawl",
+    "site_activity",
+    "site_news",
+    "site_careers",
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
     "workforce_ocr",
     "prior_year_financials",
     "claims_conversion"
   ],
+<<<<<<< HEAD
   "profiles": "C:\\Users\\sunil.sonu\\Downloads\\signalpost-company-agent-main\\signalpost-company-agent-main\\out\\latest-run\\profiles.jsonl",
   "envelopes": "C:\\Users\\sunil.sonu\\Downloads\\signalpost-company-agent-main\\signalpost-company-agent-main\\out\\latest-run\\envelopes.jsonl",
   "metrics": "C:\\Users\\sunil.sonu\\Downloads\\signalpost-company-agent-main\\signalpost-company-agent-main\\out\\latest-run\\run-metrics.json"
+=======
+  "profiles": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\profiles.jsonl",
+  "envelopes": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\envelopes.jsonl",
+  "metrics": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\run-metrics.json"
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 }

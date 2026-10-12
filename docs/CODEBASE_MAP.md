@@ -16,8 +16,12 @@ Final output of that command: `result/envelopes.jsonl` (one JSON object per comp
 2. Before deleting or renaming ANY file, read section 11 (dependency and safe-to-delete table) and section 12 (traps). Several things that look dead or archived are load-bearing.
 3. Before adding a stage or module, follow the recipes in section 11.3.
 4. Section 13 lists what was NOT read in depth. Do not assume those files behave as described beyond their signatures. Open them before editing.
+<<<<<<< HEAD
 5. PHASE 3 OVERRIDE: sections 2 (row 2), 7.4 and 10 describe the fat envelope and are outdated. `result/envelopes.jsonl` is now the public envelope (`schema_version`, `run`, `modules`, `claims`, `evidence`, `changes`, `errors`, `operations`; no `profile`). Vocabulary lives only in `src/norway_company_agent/vocabulary.py`. `scripts/validate_envelopes.py` runs after stage 6 and writes `validation-report.json` (also copied to `result/`). `build_output_contract.py --envelope-format fat` still produces the legacy shape.
 6. The pipeline was NOT executed while writing this file. Runtime behavior is inferred from code plus the sample artifacts in `out/latest-run/` (20 companies).
+=======
+5. The pipeline was NOT executed while writing this file. Runtime behavior is inferred from code plus the sample artifacts in `out/latest-run/` (20 companies).
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 
 ---
 
@@ -378,7 +382,11 @@ Environment (from `.env`, loaded by `env.load_local_env`; real environment varia
 - Set by `run_agent`: `SIGNALPOST_REQUEST_LOG`, `SIGNALPOST_SNAPSHOT_DIR`, `SIGNALPOST_RUN_ID`, `SIGNALPOST_CALLER_MODULE`.
 - Read but NOT set by `run_agent`: `SIGNALPOST_OUTPUT_DIR` (default `out/latest-run`, relative to cwd) used by `crawl_events` and `validation` for `crawl-trace.jsonl` and the quarantine file; `SIGNALPOST_CRAWL_TRACE_PATH`, `SIGNALPOST_QUARANTINE_PATH`; `TESSERACT_DIR` (run.py).
 
+<<<<<<< HEAD
 Python packages: dependencies are declared in `requirements.txt`; `scrapy==2.19.0` is required for stages 3 and 4, `lxml==6.1.3` is used as the BeautifulSoup parser, and `psutil` remains optional for Windows peak-RSS monitoring (imported lazily).
+=======
+Python packages: those in `requirements.txt`, plus `scrapy` (required for stages 3 and 4, NOT listed), `lxml` (used as BeautifulSoup parser, not listed), `psutil` (optional, Windows peak RSS, imported lazily).
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 
 System binaries for OCR: `pdftoppm` (Poppler) and `tesseract` with the Norwegian language data (`nor`). If missing, the archive connector reports a per-company error `OCR required but missing executable(s)` and continues.
 
@@ -488,7 +496,11 @@ python run.py --organisations entry-companies.jsonl --include-workforce-ocr
 python run.py --organisations entry-companies.jsonl --include-workforce-ocr --skip-deep-crawl
 
 # Rebuild result/envelopes.jsonl from an existing envelope/profile file, no collection
+<<<<<<< HEAD
 python run.py --source-envelopes out/latest-run/profiles.jsonl
+=======
+python run.py --source-envelopes out/latest-run/envelopes.jsonl
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 
 # Run the orchestrator directly (does not wipe anything; picks "-duplicate-N" dir if output exists)
 python scripts/run_agent.py --organisations entry-companies.jsonl --output-dir out/test --run-id test-1 --expected-count 20 --include-workforce-ocr

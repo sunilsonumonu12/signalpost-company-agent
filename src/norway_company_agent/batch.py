@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .evidence import evidence, utc_now
+<<<<<<< HEAD
 from .vocabulary import (
     SCHEMA_VERSION,
     TERMINAL_STATUSES,
@@ -12,12 +13,27 @@ from .vocabulary import (
     invalid_module_states,
     module_states,
 )
+=======
+
+
+TERMINAL_STATES = {
+    "complete",
+    "not_applicable",
+    "not_found",
+    "blocked_policy",
+    "blocked_robots",
+    "source_error",
+    "budget_exhausted",
+    "submission_error",
+}
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 
 
 def read_organisation_inputs(path: str | Path) -> list[dict[str, Any]]:
     source = Path(path)
     text = source.read_text(encoding="utf-8")
     values: list[Any]
+<<<<<<< HEAD
     # Some existing inputs use a .jsonl filename but contain one JSON array.
     # Detect that by content so the shared validator accepts the current default.
     if source.suffix.lower() == ".json" or text.lstrip().startswith("["):
@@ -31,6 +47,12 @@ def read_organisation_inputs(path: str | Path) -> list[dict[str, Any]]:
         if not isinstance(values, list):
             raise ValueError("'organisation_numbers' must be a JSON array")
     elif source.suffix.lower() == ".jsonl":
+=======
+    if source.suffix == ".json":
+        body = json.loads(text)
+        values = body if isinstance(body, list) else body.get("organisation_numbers", [])
+    elif source.suffix == ".jsonl":
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
         values = [json.loads(line) for line in text.splitlines() if line.strip()]
     else:
         values = [line.strip() for line in text.splitlines() if line.strip()]
@@ -117,10 +139,32 @@ def backfill_from_registry_live(profile: dict[str, Any]) -> dict[str, Any]:
     return profile
 
 
+<<<<<<< HEAD
+=======
+def evidence_terminal_state(record: dict[str, Any] | None) -> str:
+    if not record:
+        return "submission_error"
+    status = record.get("status")
+    if status == "available":
+        return "complete"
+    if status == "not_applicable":
+        return "not_applicable"
+    if status == "not_found":
+        return "not_found"
+    if status == "blocked":
+        note = str(record.get("note") or "").casefold()
+        return "blocked_robots" if "robot" in note else "blocked_policy"
+    if status == "source_error":
+        return "source_error"
+    return "submission_error"
+
+
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 def terminal_envelope(
     profile: dict[str, Any],
     *,
     run_id: str,
+<<<<<<< HEAD
     started_at: str,
     completed_at: str,
 ) -> dict[str, Any]:
@@ -137,11 +181,34 @@ def terminal_envelope(
         "started_at": started_at,
         "completed_at": completed_at,
         "modules": states,
+=======
+    modules: Iterable[str],
+    started_at: str,
+    completed_at: str,
+) -> dict[str, Any]:
+    module_states = {}
+    for module in modules:
+        record = profile.get("evidence", {}).get(module)
+        module_states[module] = {
+            "state": evidence_terminal_state(record),
+            "retry_count": int((record or {}).get("retry_count") or 0),
+            "final_timestamp": (record or {}).get("retrieved_at") or completed_at,
+        }
+    entity_state = "submission_error" if any(item["state"] == "submission_error" for item in module_states.values()) else "complete"
+    return {
+        "run_id": run_id,
+        "organisation_number": profile["organisation_number"],
+        "state": entity_state,
+        "started_at": started_at,
+        "completed_at": completed_at,
+        "modules": module_states,
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
         "profile": profile,
     }
 
 
 def validate_envelopes(envelopes: list[dict[str, Any]], expected_count: int) -> dict[str, Any]:
+<<<<<<< HEAD
     """Count/vocabulary check that works on both fat and public envelopes."""
     orgs = [item.get("organisation_number") for item in envelopes]
 
@@ -152,12 +219,25 @@ def validate_envelopes(envelopes: list[dict[str, Any]], expected_count: int) -> 
         {"organisation_number": item.get("organisation_number"), "problem": problem}
         for item in envelopes
         for problem in invalid_module_states(item.get("modules") or {})
+=======
+    orgs = [item.get("organisation_number") for item in envelopes]
+    invalid_states = [
+        {"organisation_number": item.get("organisation_number"), "state": state.get("state")}
+        for item in envelopes
+        for state in item.get("modules", {}).values()
+        if state.get("state") not in TERMINAL_STATES
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
     ]
     checks = {
         "exact_expected_count": len(envelopes) == expected_count,
         "unique_organisation_numbers": len(orgs) == len(set(orgs)),
+<<<<<<< HEAD
         "all_terminal_statuses_valid": all(status_of(item) in TERMINAL_STATUSES for item in envelopes),
         "all_module_states_valid": not invalid_states,
+=======
+        "all_entity_states_terminal": all(item.get("state") in TERMINAL_STATES for item in envelopes),
+        "all_module_states_terminal": not invalid_states,
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
         "zero_silent_drops": len(envelopes) == expected_count and len(orgs) == len(set(orgs)),
     }
     return {"passed": all(checks.values()), "checks": checks, "invalid_states": invalid_states}

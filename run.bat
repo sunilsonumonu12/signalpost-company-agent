@@ -1,4 +1,5 @@
 @echo off
+<<<<<<< HEAD
 cd /d "%~dp0"
 echo ============================================
 echo   SignalPost Hackathon - RUN START
@@ -7,6 +8,11 @@ if "%*"=="" (
 ) else (
     echo   Arguments: %*
 )
+=======
+echo ============================================
+echo   SignalPost Hackathon - RUN START
+echo   Companies file: 1000-companies.jsonl
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 echo ============================================
 echo.
 
@@ -19,12 +25,28 @@ if errorlevel 1 (
     exit /b 1
 )
 
+<<<<<<< HEAD
+=======
+REM Check input file exists
+if not exist "1000-companies.jsonl" (
+    echo ❌ ERROR: 1000-companies.jsonl file nahi mila!
+    echo    File ko project root folder me rakho.
+    pause
+    exit /b 1
+)
+
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 echo ⏳ Run start ho gaya... Progress har 30 seconds me dikhega.
 echo    Final output yaha milega: result\envelopes.jsonl
 echo.
 
+<<<<<<< HEAD
 REM Forward all arguments; with no arguments run.py uses its own default input.
 python run.py %*
+=======
+REM Run the project with default 1000 companies file
+python run.py --organisations 1000-companies.jsonl
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 
 REM Show exit status
 if errorlevel 1 (

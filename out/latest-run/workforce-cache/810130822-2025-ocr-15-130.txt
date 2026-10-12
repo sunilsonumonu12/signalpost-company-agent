@@ -1,0 +1,554 @@
+DEN
+== Brønnøysundregistrene
+ÅRSREGNSKAP FOR REGNSKAPSÅRET 2025 - GENERELL INFORMASJON
+Journalnummer: 2026 637232
+Virksomheten
+Organisasjonsnummer: 810 130 822
+Organisasjonsform: Aksjeselskap
+Foretaksnavn: ALSTRA AS
+Forretningsadresse: Homme
+4990 SØNDELED
+Regnskapsår
+Årsregnskapets periode: 01.01.2025 - 31.12.2025
+Konsern
+Morselskap i konsern: Nei
+Regnskapsregler
+Regler for små foretak benyttet: Ja
+Benyttet ved utarbeidelsen av
+årsregnskapet: Reqnskapslovens alminnelige regler
+Årsregnskapet fastsatt av kompetent organ
+Bekreftet av: Helge Ordahl
+Dato for fastsettelse av årsregnskapet: 20.06.2026
+Revisjon
+Selskapet har besluttet at årsregnskapet
+ikke skal revideres: Ja
+Årsregnskapet er utarbeidet av ekstern
+autorisert regnskapsfører: Ja
+Ekstern autorisert regnskapsfører har i
+løpet av regnskapsåret bistått ved den
+løpende reqnskapsføringen eller utført
+andre tjenester for selskapet enn å
+utarbeide årsregnskapet: Ja
+Grunnlag for avgivelse
+År 2025: Arsregqgnskap er elektronisk innlevert.
+År 2024: Tall er hentet fra elektronisk innlevert årsregnskap fra 2025.
+Virksomheten sitt øverste organ er ansvarlig for at årsregnskapet er signert.
+Det er mulig å levere årsregnskap uten signatur fordi sikkerheten for rett
+rapportering er ivaretatt ved at innsenderen har rolle/rettighet for innsending
+i Altinn. Navnet på representanten, som bekrefter at årsregnskapet er godkjent,
+er i tillegg oppgitt.
+Brønnøysundregistrene, 04.07.2026
+Postadresse: Postboks 900, 8910 Brønnøysund
+Telefon: 75 00 75 00
+E-post: firmapostØbrreg.no Internett: www.brreg.no
+Organisasjonsnummer: 974 760 673
+
+Organisasjonsnr: 810 130 822
+
+ALSTRA AS
+
+RESULTATREGNSKAP
+
+Beløp i: NOK Note 2025 2024
+
+RESULTATREGNSKAP
+
+Inntekter
+
+Salgsinntekt l 606 421 2 170 385
+
+Annen driftsinntekt 1 2 134 001 1 393
+
+Sum inntekter 3 740 422 2 171 778
+
+Kostnader
+
+Varekostnad 1 273 553 1 548 216
+
+Lønnskostnad 2 357 045 503 493
+
+Avskrivning på varige
+
+driftsmidler og
+
+immaterielle eiendeler 0 8 074
+
+Annen driftskostnad 415 237 345 784
+
+Sum kostnader 2 045 835 2 405 567
+
+Driftsresultat 1 694 587 -233 789
+
+Finansinntekter og
+
+finanskostnader
+
+Annen renteinntekt 4 259 217
+
+Annen finansinntekt 0 70
+
+Sum finansinntekter 4 259 287
+
+Annen rentekostnad 134 744 158 555
+
+Annen finanskostnad 0 4 000
+
+Sum finanskostnader 134 744 162 555
+
+Netto finans -130 486 -162 268
+
+Resultat før skattekostnad 1 564 101 -396 057
+
+Skattekostnad 3 197 492 0
+
+Årsresultat 1 366 609 -396 057
+
+Annen egenkapital 1 366 609 -396 057
+Utskriftsdato 04.07.2026 Organisasjonsnr 810 130 822 Side 1 av 3
+
+Organisasjonsnr: 810 130 822
+ALSTRA AS
+BALANSE
+Beløp i: NOK Note 2025 2024
+BALANSE - EIENDELER
+Anleggsmidler
+Immaterielle eiendeler
+Sum immaterielle eiendeler 0) 0)
+Varige driftsmidler
+Tomter, bygninger og
+annen fast eiendom 1 2 359 913 2 520 742
+Driftsløsøre, inventar,
+verktøy, kontormaskiner,
+ol. l 0 0
+Sum varige driftsmidler 2 359 913 2 520 742
+Finansielle anleggsmidler
+Investeringer i aksjer og
+andeler 3 000 0
+Sum finansielle
+anleggsmidler 3 000 0]
+Sum anleggsmidler 2 362 913 2 520 742
+Omløpsmidler
+Varer
+Varer 30 000 396 000
+Fordringer
+Kundefordringer 90 346 106 571
+Andre kortsiktige
+fordringer 1 000 33 828
+Sum fordringer 91 346 140 399
+Investeringer
+Sum investeringer 0] 0)
+Bankinnskudd, kontanter
+og lignende
+Bankinnskudd, kontanter
+og lignende 108 459 43 516
+Sum bankinnskudd,
+kontanter og lignende 108 459 43 516
+Sum omløpsmidler 229 804 579 915
+SUM EIENDELER 2 592 717 3 100 657
+BALANSE - EGENKAPITAL OG
+GJELD
+
+Utskriftsdato 04.07.2026 Organisasjonsnr 810 130 822 Side 2 av 3
+
+Egenkapital
+
+Innskutt egenkapital
+
+Aksjekapital 100 000 100 000
+
+Sum innskutt egenkapital 100 000 100 000
+
+Opptjent egenkapital
+
+Annen egenkapital 1 624 103 257 494
+
+Sum opptjent egenkapital 1 624 103 257 494
+
+Sum egenkapital 1 724 103 357 494
+
+Gjeld
+
+Langsiktig gjeld
+
+Utsatt skatt 3 197 492 0
+
+Sum avsetninger for
+
+forpliktelser 197 492 0)
+
+Annen langsiktig gjeld
+
+Gjeld til
+
+kredittinstitusjoner 4 90 738 2 230 000
+
+Sum annen langsiktig gjeld 90 738 2 230 000
+
+Kortsiktig gjeld
+
+Leverandørgjeld 142 936 282 696
+
+Skyldige offentlige
+
+avgifter 47 790 30 417
+
+Annen kortsiktig gjeld 389 658 200 050
+
+Sum kortsiktig gjeld 580 384 513 163
+
+Sum gjeld 868 614 2 743 163
+
+SUM EGENKAPITAL OG GJELD 2 592 717 3 100 657
+Utskriftsdato 04.07.2026 Organisasjonsnr 810 130 822 Side 3 av 3
+
+Organisasjonsnr: 810 130 822
+
+ALSTRA AS
+
+NOTEOPPLYSNINGER - SELSKAP - alle poster oppgitt i hele tall
+Note
+
+Regnskapsprinsipper
+
+Årsregnskapet er satt opp i samsvar med regnskapsloven og god
+regnskapsskikk for små foretak.
+
+Salgsinntekter
+
+Inntektsføring ved salg av
+
+varer skjer på leveringstidspunktet. Tjenester inntektsføres etter hvert
+som de leveres.
+
+Klassifisering og vurdering av balanseposter
+
+Anleggsmidler
+
+er eiendeler bestemt til varig eie eller bruk. Eiendeler som er knyttet til
+varekretsløpet er klassifisert som omløpsmidler. Fordringer klassifiseres
+som omløpsmidler hvis de forfaller til betaling innen ett år etter
+transaksjonsdagen. Tilsvarende klassifiseres gjeld som kortsiktig hvis
+gjelden forfaller til betaling innen ett år. Langsiktig gjeld er gjeld som
+forfaller senere enn ett år etter transaksjonsdagen. Første års avdrag på
+langsiktige fordringer og langsiktig gjeld klassifiseres likevel ikke som
+omløpsmiddel og kortsiktig gjeld.
+
+Omløpsmidler vurderes til laveste av
+
+anskaffelseskost og virkelig verdi. Kortsiktig gjeld balanseføres til
+nominelt beløp på etableringstidspunktet. Anleggsmidler vurderes til
+anskaffelseskost. Varige anleggsmidler avskrives etter en fornuftig
+avskrivningsplan. Anleggsmidlene nedskrives til virkelig verdi ved
+verdifall som ikke forventes å være forbigående. Langsiktig gjeld med
+unntak av andre avsetninger balanseføres til nominelt beløp på
+etableringstidspunktet.
+
+Fordringer
+
+Kundefordringer og andre fordringer er
+
+oppført i balansen til pålydende etter fradrag for avsetning til forventet
+tap. Avsetning til tap gjøres på grunnlag av individuelle vurderinger av de
+enkelte fordringene.
+
+Varebeholdninger
+
+Lager av innkjøpte varer er verdsatt
+
+til laveste verdi av anskaffelseskost etter FIFO- prinsippet og virkelig
+verdi. Det foretas nedskrivning for påregnelig ukurans.
+
+Varige
+
+driftsmidler
+
+Varige driftsmidler balanseføres og avskrives over
+
+driftsmidlenes levetid dersom de har antatt levetid over 3 år og har en
+kostpris som overstiger kr 30 000. Direkte vedlikehold av driftsmidler
+kostnadsføres løpende under driftskostnader, mens påkostninger eller
+forbedringer tillegges driftsmidlets kostpris og avskrives i takt med
+driftsmidlet.
+
+Forøvrig er følgende regnskapsprinsipper
+
+anvendt :
+
+Leieavtaler er ikke balanseført.
+
+Skatt
+
+Skattekostnaden i
+
+resultatregnskapet omfatter både periodens betalbare skatt og endring i
+utsatt skatt. Utsatt skatt er beregnet med 22% på grunnlag av de
+midlertidige forskjeller som eksisterer mellom regnskapsmessige og
+skattemessige verdier, samt skattemessig underskudd til fremføring ved
+utgangen av regnskapsåret. Skatteøkende og skattereduserende midlertidige
+forskjeller som reverserer eller kan reversere i samme periode er fastsatt
+
+og skattevirkningen er beregnet på nettogrunnlaget.
+Selskapet har ikke
+endret regnskapsprinsipp fra 2024 til 2025.
+Note
+Antall årsverk i regnskapsåret
+2.00
+Note
+2
+Spesifisering av resultatregnskapet
+Lønnkostnader
+Lønn Årets Fjorårets
+314347.00 445931.00
+Folketrygdavgift Årets Fjorårets
+35125.00 48991.00
+Andre ytelser Årets Fjorårets
+7572.00 8571.00
+Sum lønnskostnader Årets Fjorårets
+357045.00 503493.00
+Note
+1
+Varige driftsmidler og immaterielle eiendeler
+Anskaffelseskost 01.01. Varige driftsmidler Immaterielle eiend.
+2578553.00 0.00
+Avqanq i året Varige driftsmidler Immaterielle eiend.
+218640.00 0.00
+Anskaffelseskost 31.12. Varige driftsmidler Immaterielle eiend.
+2359913.00 0.00
+Balanseført verdi 31.12. Varige driftsmidler Immaterielle eiend.
+2359913.00 0.00
+Anskaffelseskost - balanseførte lånekostnader, egentilvirkede anleggsmidler
+Goodwill spesifisert for hvert enkelt virksomhetskjøp
+Avskrivningsplan for goodwill som er lenger enn fem år - begrunnelse
+Mer om varige driftsmidler/immaterielle eiendeler
+Note viser bokførte verdier.
+I oktober 2025 ble selskapets eiendom på
+driftssted Homme i Risør kommune solgt.
+Regnskapsmessig gevinst kr. 2 134
+001.
+
+Note
+
+4
+
+Gjeld
+
+Gjeld som forfaller til betaling mer enn fem år etter regnskapsårets slutt
+Gjeld sikret ved pant eller lignende sikkerhet i eiendeler
+
+90738.00
+
+Balanseført verdi av de pantsatte eiendeler
+
+2359913.00
+
+Summen av garantiforpliktelser som ikke er regnskaps ført
+Garantiforpliktelser som er sikret ved pant
+
+Mer om gjeld
+
+Note
+
+Lån og sikkerhetsstillelse til medlemmer
+
+Opplysninger om: Medlemmer av:
+
+Mer om lån og sikkerhetsstillelse
+
+Selskapet har et mellomværende til aksjonær på kr. 325 397 pr.31.12.2025.
+
+Årsregnskap for
+ALSTRA AS
+810130822
+Regnskapsår
+01.01.2025 - 31.12.2025
+
+ALSTRA AS
+810 130 822
+Resultatregnskap
+
+Note 2025 2024
+Driftsinntekter
+Salgsinntekt 1 606 421 2170 385
+Annen driftsinntekt 1 2 134 001 1 393
+Sum driftsinntekter 3 740 422 2171 778
+Driftskostnader
+Varekostnad -1 273 553 -1 548 216
+Lønnskostnad 2 -357 045 -503 493
+Avskrivning på varige driftsmidler og immaterielle 0 -8 074
+eiendeler
+Annen driftskostnad -415 237 -345 784
+Sum driftskostnader -2 045 835 -2 405 567
+Driftsresultat 1 694 587 -233 789
+Finansinntekter
+Annen renteinntekt 4 259 217
+Annen finansinntekt 0 70
+Sum finansinntekter 4 259 287
+Finanskostnader
+Annen rentekostnad -134 744 -158 555
+Annen finanskostnad 0 -4 000
+Sum finanskostnader -134 744 -162 555
+Netto finans -130 486 -162 268
+Resultat før skattekostnad 1 564 101 -396 057
+Skattekostnad 3 -197 492 0
+Årsresultat 1 366 609 -396 057
+Overføringer
+Annen egenkapital 1 366 609 -396 057
+Sum overføringer 1 366 609 -396 057
+
+ALSTRA AS
+810 130 822
+Balanse
+
+Note 31.12.2025 31.12.2024
+EIENDELER
+Anleggsmidler
+Varige driftsmidler
+Tomter, bygninger og annen fast eiendom 1 2 359 913 2 520 742
+Sum varige driftsmidler 2 359 913 2 520 742
+Finansielle anleggsmidler
+Investeringer i aksjer og andeler 3 000 0
+Sum finansielle anleggsmidler 3 000 0
+Sum anleggsmidler 2 362 913 2 520 742
+Omløpsmidler
+Varer
+Varer 30 000 396 000
+Sum varer 30 000 396 000
+Fordringer
+Kundefordringer 90 346 106 571
+Andre kortsiktige fordringer 1000 33 828
+Sum fordringer 91 346 140 399
+Bankinnskudd, kontanter og lignende
+Bankinnskudd, kontanter og lignende 108 459 43 516
+Sum bankinnskudd, kontanter og lignende 108 459 43 516
+Sum omløpsmidler 229 804 579915
+SUM EIENDELER 2 592717 3 100 657
+
+ALSTRA AS
+810 130 822
+Balanse
+
+Note 31.12.2025 31.12.2024
+EGENKAPITAL OG GJELD
+Egenkapital
+Innskutt egenkapital
+Aksjekapital 100 000 100 000
+Sum innskutt egenkapital 100 000 100 000
+Opptjent egenkapital
+Annen egenkapital 1624 103 257 494
+Sum opptjent egenkapital 1624 103 257 494
+Sum egenkapital 1724 103 357 494
+Gjeld
+Avsetning og forpliktelser
+Utsatt skatt 3 197 492 0
+Sum avsetning for forpliktelser 197 492 0
+Annen langsiktig gjeld
+Gjeld til kredittinstitusjoner 4 90 738 2 230 000
+Sum annen langsiktig gjeld 90 738 2 230 000
+Kortsiktig gjeld
+Leverandørgjeld 142 936 282 696
+Skyldige offentlige avgifter 47 790 30 417
+Annen kortsiktig gjeld 389 658 200 050
+Sum kortsiktig gjeld 580 384 513 163
+Sum gjeld 868 614 2 743 163
+SUM EGENKAPITAL OG GJELD 2 592717 3 100 657
+SØNDELED, 20.06.2026
+Julie Ordahl Sally Anita Straum Helge Ordahl
+styrets leder styremedlem styremedlem / daglig leder
+
+ALSTRA AS
+
+810 130 822
+
+Noter
+
+Regnskapsprinsipper
+Årsregnskapet er satt opp i samsvar med regnskapsloven og god regnskapsskikk for små foretak.
+Salgsinntekter
+
+Inntektsføring ved salg av varer skjer på leveringstidspunktet. Tjenester inntektsføres etter hvert som de
+leveres.
+
+Klassifisering og vurdering av balanseposter
+Anleggsmidler er eiendeler bestemt til varig eie eller bruk. Eiendeler som er knyttet til varekretsløpet er
+klassifisert som omløpsmidler. Fordringer klassifiseres som omløpsmidler hvis de forfaller til betaling innen ett
+år etter transaksjonsdagen. Tilsvarende klassifiseres gjeld som kortsiktig hvis gjelden forfaller til betaling innen
+ett år. Langsiktig gjeld er gjeld som forfaller senere enn ett år etter transaksjonsdagen. Første års avdrag på
+langsiktige fordringer og langsiktig gjeld klassifiseres likevel ikke som omløpsmiddel og kortsiktig gjeld.
+Omløpsmidler vurderes til laveste av anskaffelseskost og virkelig verdi. Kortsiktig gjeld balanseføres til nominelt
+beløp på etableringstidspunktet. Anleggsmidler vurderes til anskaffelseskost. Varige anleggsmidler avskrives
+etter en fornuftig avskrivningsplan. Anleggsmidlene nedskrives til virkelig verdi ved verdifall som ikke forventes
+å være forbigående. Langsiktig gjeld med unntak av andre avsetninger balanseføres til nominelt beløp på
+etableringstidspunktet.
+
+Fordringer
+
+Kundefordringer og andre fordringer er oppført i balansen til pålydende etter fradrag for avsetning til forventet
+tap. Avsetning til tap gjøres på grunnlag av individuelle vurderinger av de enkelte fordringene.
+Varebeholdninger
+
+Lager av innkjøpte varer er verdsatt til laveste verdi av anskaffelseskost etter FIFO- prinsippet og virkelig verdi.
+Det foretas nedskrivning for påregnelig ukurans.
+Varige driftsmidler
+Varige driftsmidler balanseføres og avskrives over driftsmidlenes levetid dersom de har antatt levetid over 3 år
+og har en kostpris som overstiger kr 30 000. Direkte vedlikehold av driftsmidler kostnadsføres løpende under
+driftskostnader, mens påkostninger eller forbedringer tillegges driftsmidlets kostpris og avskrives i takt med
+driftsmidlet.
+
+Forøvrig er følgende regnskapsprinsipper anvendt:
+
+Leieavtaler er ikke balanseført.
+
+Skatt
+
+Skattekostnaden i resultatregnskapet omfatter både periodens betalbare skatt og endring i utsatt skatt. Utsatt
+skatt er beregnet med 22% på grunnlag av de midlertidige forskjeller som eksisterer mellom regnskapsmessige
+og skattemessige verdier, samt skattemessig underskudd til fremføring ved utgangen av regnskapsåret.
+Skatteøkende og skattereduserende midlertidige forskjeller som reverserer eller kan reversere i samme periode
+er fastsatt og skattevirkningen er beregnet på nettogrunnlaget.
+
+Selskapet har ikke endret regnskapsprinsipp fra 2024 til 2025.
+Antall årsverk
+
+Antall årsverk sysselsatt i regnskapsåret: 2
+
+ALSTRA AS
+810 130 822
+Note 1 - Varige driftsmidler og immaterielle eiendeler
+Varige
+driftsmidler
+Anskaffelseskost 01.01. 2 578 553
+Tilgang i året 0
+Avgang i året -218 640
+Anskaffelseskost 31.12. 2 359 913
+Samlede avskrivninger, nedskrivninger og reverseringer av nedskrivninger 0
+Balanseført verdi per 31.12. 2 359 913
+Mer om varige driftsmidlerfimmaterielle eiendeler
+Note viser bokførte verdier.
+I oktober 2025 ble selskapets eiendom på driftssted Homme i Risør kommune solgt.
+Regnskapsmessig gevinst kr. 2 134 001.
+Note 2 - Lønnskostnader
+Spesifikasjon av lønnskostnader 2025 2024
+Lønn 314 347 445 931
+Arbeidsgiveravgift 35 125 48 991
+Pensjonskostnader 0 0
+Andre relaterte ytelser 15712 8571
+Sum 357 045 503 493
+Note 3 - Spesifisering av skatt
+Skattekostnad 2025 2024
++/- Endringer i utsatt skatt/utsatt skattefordel 197 492 0
+Skattekostnad 197 492 0
+Skattepliktig inntekt
+Resultat før skatt 1 564 101 -396 057
+Permanente forskjeller -9 -13
++/- Endring i midlertidige forskjeller -1 706 494 487
+Skattepliktig inntekt -142 401 -395 582
+Note 4 - Gjeld og garantiforpliktelser
+Beløp
+Del av gjelden som forfaller til betaling mer enn fem år etter regnskapsårets slutt 0
+Gjeld som er sikret ved pant eller lignende sikkerhet i eiendeler 90 738
+Balanseført verdi av pantsatte eiendeler 2 359 913
+Summen av garantiforpliktelser som ikke er regnskapsført 0
+Lån og sikkerhetsstillelse til ledende personer, eiere med videre
+Det er ikke gitt lån eller sikkerhetsstillelse til medlemmer av styrende organer.
+Mer om lån og sikkerhetsstillelse
+Selskapet har et mellomværende til aksjonær på kr. 325 397 pr.31.12.2025.

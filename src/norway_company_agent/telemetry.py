@@ -279,12 +279,16 @@ def build_metrics(
         providers[provider]["failed"] += int(not event.get("success"))
         providers[provider]["cache_hits"] += int(bool(event.get("cache_hit")))
         providers[provider]["cache_misses"] += int(bool(event.get("cache_miss")))
+<<<<<<< HEAD
     # Gaps/errors in collected data are not processing failures. Only the explicit
     # "failed" status is unsuccessful; the other terminal statuses count as processed.
     success_count = sum(
         1 for item in per_company.values()
         if item.get("status") in {"completed", "completed_with_gaps", "completed_with_errors"}
     )
+=======
+    success_count = sum(1 for item in per_company.values() if item.get("status") == "completed")
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
     failed_count = sum(1 for item in per_company.values() if item.get("status") == "failed")
 
     # Step 3: build structured discovery blocks — one per provider.

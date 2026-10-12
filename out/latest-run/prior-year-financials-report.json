@@ -1,8 +1,15 @@
 {
   "connector": "prior_year_financials_v1",
+<<<<<<< HEAD
   "profiles": 9,
   "eligible": 7,
   "accepted": 0,
   "observations": 0,
+=======
+  "profiles": 20,
+  "eligible": 15,
+  "accepted": 15,
+  "observations": 15,
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
   "claim_boundary": "Only fields where the known current-year value was found as an exact prefix of the OCR'd digit sequence; the remainder is trusted as the prior year. Abstains rather than guesses a split point."
 }

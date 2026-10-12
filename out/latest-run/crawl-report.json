@@ -1,0 +1,109 @@
+{
+  "input_sha256": "95c624a1faf1d8003c2139a56bdc61e12bc2be3d1940b5c5c9d03672967c1c59",
+  "profiles": 3,
+  "website_seeds_selected": 3,
+  "profiles_with_events": 3,
+  "unique_events": 16,
+  "events_added": 16,
+  "events_present_before_run": 0,
+  "synthetic_terminal_events": 0,
+  "website_statuses": {
+    "available": 2,
+    "source_error": 1
+  },
+  "identity_statuses": {
+    "review": 1,
+    "rejected": 1,
+    "exact": 1
+  },
+  "identity_decisions": {
+    "REVIEW": 1,
+    "REJECT": 1,
+    "ACCEPT": 1
+  },
+  "page_outcome_counts": {
+    "attempted": 16,
+    "available": 16,
+    "by_failure_class": {},
+    "missing_failure_class_legacy_events": 16
+  },
+  "validation": {
+    "crawl_page_events_accepted": 16,
+    "crawl_page_events_rejected": 0,
+    "website_values_accepted": 3,
+    "website_values_rejected": 0,
+    "quarantined_records": 0,
+    "quarantine_path": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\validation-quarantine.jsonl"
+  },
+  "published_social_profiles": 0,
+  "elapsed_seconds": 59.195,
+  "run_started_at": "2026-10-06T04:58:42.253045Z",
+  "run_finished_at": "2026-10-06T04:59:41.448558Z",
+  "events_per_second": 0.27,
+  "requests": 22,
+  "responses": 22,
+  "response_bytes": 1893936,
+  "retries": 0,
+  "robots_forbidden": 0,
+  "request_wall_latency_including_queue": {
+    "n": 22,
+    "p50_ms": 2472.525,
+    "p95_ms": 47642.871,
+    "max_ms": 48737.879
+  },
+  "response_download_latency": {
+    "n": 22,
+    "p50_ms": 908.313,
+    "p95_ms": 2214.203,
+    "max_ms": 2481.755
+  },
+  "failure_attempt_wall_latency": {
+    "n": 0,
+    "p50_ms": null,
+    "p95_ms": null,
+    "max_ms": null
+  },
+  "company_completion_latency": {
+    "n": 3,
+    "p50_ms": 2102.556,
+    "p95_ms": 8404.693,
+    "max_ms": 8404.693
+  },
+  "company_completion_synthetic_upper_bounds": 0,
+  "request_domain_fairness": {
+    "domains": 4,
+    "p50_requests": 4.0,
+    "p95_requests": 8.0,
+    "max_requests": 8
+  },
+  "response_statuses": {
+    "200": 20,
+    "301": 1,
+    "307": 1
+  },
+  "error_buckets": {},
+  "request_amplification_per_seed": 7.333,
+  "terminal_coverage": 1.0,
+  "crawl_complete": true,
+  "peak_rss_bytes": 189603840,
+  "output_sha256": "2719c725c4af43c80757cd2d8fd4a6d96de948057d21d2fe378845580bb0841a",
+  "finish_reason": "finished",
+  "resume_noop": false,
+  "concurrency": 16,
+  "per_domain": 2,
+  "jobdir": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\crawl-jobdir",
+  "events_path": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\crawl-events.jsonl",
+  "forensics_path": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\website-forensics.jsonl",
+  "forensic_summary_path": "C:\\Users\\sunil\\Desktop\\SignalPost_Hackathon\\Tester\\signalpost-company-agent-main\\out\\latest-run\\website-forensic-summary.json",
+  "forensic_totals": {
+    "companies_with_careers_pages": 0,
+    "companies_with_job_links": 0,
+    "total_job_links": 0,
+    "total_job_candidates": 0,
+    "total_normalized_jobs": 0,
+    "companies_with_news_pages": 1,
+    "total_article_links": 169,
+    "total_article_candidates": 28,
+    "total_normalized_news": 20
+  }
+}

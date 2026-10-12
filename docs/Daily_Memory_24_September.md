@@ -16,6 +16,7 @@ isme kitna claims hai konsa row mai kya data hai samajhna hoga
 
 mujhe lag raha hai append ho raha hai overwrite kyuki bahut data hai 
 
+<<<<<<< HEAD
 toh each file mai kya hai 
 
 "810324562",
@@ -29,3 +30,6 @@ toh each file mai kya hai
   "810438452",
   "810441682",
   "810463902"
+=======
+toh each file mai kya hai 
+>>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3

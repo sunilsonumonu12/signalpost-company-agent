@@ -1,0 +1,183 @@
+{
+  "generated_at": "2026-10-06T04:57:38.362817Z",
+  "started_at": "2026-10-06T04:55:27.094250Z",
+  "provider": "Tavily Search API",
+  "provider_name": "Tavily",
+  "provider_endpoint": "https://api.tavily.com/search",
+  "access_mode": "api_key",
+  "input_profiles": 20,
+  "queried_missing_website_profiles": 18,
+  "counts": {
+    "provider_requests": 18,
+    "provider_bytes": 256823,
+    "abstained_before_crawl": 13,
+    "independent_crawls": 5,
+    "crawl_requests": 54,
+    "quarantined_sites": 4,
+    "registry_website_present_skipped": 2,
+    "verified_sites": 1,
+    "promoted_sites": 1
+  },
+  "provider_latency_ms": {
+    "p50": 2113,
+    "p95": 3115
+  },
+  "raw_search_results_persisted": false,
+  "promote_verified_enabled": true,
+  "qualification": "not_evaluated_on_500_org_external_final_corpus",
+  "discovery_metrics": {
+    "provider_name": "Tavily",
+    "eligible_count": 18,
+    "triggered_count": 18,
+    "successful_count": 1,
+    "failed_count": 0,
+    "abstained_count": 13,
+    "companies_attempted": [
+      "810034882",
+      "810059672",
+      "810094532",
+      "810098252",
+      "810105372",
+      "810130822",
+      "810182482",
+      "810202572",
+      "810274042",
+      "810324562",
+      "810363142",
+      "810392312",
+      "810393572",
+      "810431172",
+      "810432322",
+      "810438452",
+      "810441682",
+      "810463902"
+    ]
+  },
+  "company_outcomes": [
+    {
+      "organisation_number": "810034882",
+      "outcome": "abstained",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810059672",
+      "outcome": "abstained",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810094532",
+      "outcome": "abstained",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810098252",
+      "outcome": "abstained",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810105372",
+      "outcome": "abstained",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810130822",
+      "outcome": "quarantined",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810182482",
+      "outcome": "abstained",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810202572",
+      "outcome": "abstained",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810274042",
+      "outcome": "abstained",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810324562",
+      "outcome": "quarantined",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810359862",
+      "outcome": "skipped",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810363142",
+      "outcome": "abstained",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810392312",
+      "outcome": "quarantined",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810393572",
+      "outcome": "abstained",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810412402",
+      "outcome": "skipped",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810431172",
+      "outcome": "abstained",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810432322",
+      "outcome": "abstained",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810438452",
+      "outcome": "verified",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810441682",
+      "outcome": "quarantined",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810463902",
+      "outcome": "abstained",
+      "provider": "Tavily"
+    }
+  ],
+  "eligible_count": 18,
+  "triggered_count": 18,
+  "successful_count": 1,
+  "failed_count": 0,
+  "abstained_count": 13,
+  "companies_attempted": [
+    "810034882",
+    "810059672",
+    "810094532",
+    "810098252",
+    "810105372",
+    "810130822",
+    "810182482",
+    "810202572",
+    "810274042",
+    "810324562",
+    "810363142",
+    "810392312",
+    "810393572",
+    "810431172",
+    "810432322",
+    "810438452",
+    "810441682",
+    "810463902"
+  ]
+}

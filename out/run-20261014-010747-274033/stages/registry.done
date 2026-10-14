@@ -1,0 +1,12 @@
+{
+  "input_sha256": "b005c30720bab6517cf7d66c709ac7b4274f6c5d35bd3c0d508fe1e887edc3f1",
+  "flags": [
+    "--run-id",
+    "run-20261014-010747-274033",
+    "--expected-count",
+    "9",
+    "--modules",
+    "registry,accounting_obligation,registry_live,financials,financial_history,roles,group,locations,website"
+  ],
+  "completed_at": "2026-10-14T01:08:34Z"
+}

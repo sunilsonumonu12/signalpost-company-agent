@@ -1,0 +1,97 @@
+{
+  "connector": "official_annual_report_workforce_v1",
+  "eligible": 9,
+  "accepted": 0,
+  "status_counts": {
+    "registry_count_already_available": 2,
+    "error": 7
+  },
+  "claim_boundary": "Latest official PDF, exact organisation number in document, company-scope employee phrase only; group phrases and conflicts abstain.",
+  "company_results": [
+    {
+      "organisation_number": "810034882",
+      "status": "registry_count_already_available"
+    },
+    {
+      "organisation_number": "810059672",
+      "status": "error",
+      "error": "OCR required but missing executable(s): pdftoppm, tesseract",
+      "report_year": "2025",
+      "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/810059672/2025",
+      "pdf_text_characters": 13,
+      "ocr_required": true,
+      "ocr_used": false,
+      "cache_hit": false
+    },
+    {
+      "organisation_number": "810094532",
+      "status": "error",
+      "error": "OCR required but missing executable(s): pdftoppm, tesseract",
+      "report_year": "2025",
+      "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/810094532/2025",
+      "pdf_text_characters": 7,
+      "ocr_required": true,
+      "ocr_used": false,
+      "cache_hit": false
+    },
+    {
+      "organisation_number": "810098252",
+      "status": "error",
+      "error": "OCR required but missing executable(s): pdftoppm, tesseract",
+      "report_year": "2025",
+      "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/810098252/2025",
+      "pdf_text_characters": 16,
+      "ocr_required": true,
+      "ocr_used": false,
+      "cache_hit": false
+    },
+    {
+      "organisation_number": "810105372",
+      "status": "error",
+      "error": "OCR required but missing executable(s): pdftoppm, tesseract",
+      "report_year": "2025",
+      "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/810105372/2025",
+      "pdf_text_characters": 6,
+      "ocr_required": true,
+      "ocr_used": false,
+      "cache_hit": false
+    },
+    {
+      "organisation_number": "810130822",
+      "status": "error",
+      "error": "OCR required but missing executable(s): pdftoppm, tesseract",
+      "report_year": "2025",
+      "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/810130822/2025",
+      "pdf_text_characters": 12,
+      "ocr_required": true,
+      "ocr_used": false,
+      "cache_hit": false
+    },
+    {
+      "organisation_number": "810182482",
+      "status": "registry_count_already_available"
+    },
+    {
+      "organisation_number": "810202572",
+      "status": "error",
+      "error": "OCR required but missing executable(s): pdftoppm, tesseract",
+      "report_year": "2025",
+      "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/810202572/2025",
+      "pdf_text_characters": 15,
+      "ocr_required": true,
+      "ocr_used": false,
+      "cache_hit": false
+    },
+    {
+      "organisation_number": "810274042",
+      "status": "error",
+      "error": "OCR required but missing executable(s): pdftoppm, tesseract",
+      "report_year": "2025",
+      "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/810274042/2025",
+      "pdf_text_characters": 11,
+      "ocr_required": true,
+      "ocr_used": false,
+      "cache_hit": false
+    }
+  ]
+}

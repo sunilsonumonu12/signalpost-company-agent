@@ -1,0 +1,81 @@
+{
+  "schema_version": "1.0",
+  "run_id": "run-20261014-010747-274033",
+  "envelopes_file": "C:\\Users\\sunil.sonu\\Downloads\\signalpost-company-agent-main\\signalpost-company-agent-main\\out\\run-20261014-010747-274033\\envelopes.jsonl",
+  "envelopes_sha256": "dd6b0eaa0791e12efe1fea7f51aaf9b5e0036eed26f1de7a886f135941aee0a3",
+  "envelope_count": 9,
+  "validated_at": "2026-10-14T01:12:00.420452Z",
+  "passed": true,
+  "checks": {
+    "01_row_keysets_identical": {
+      "passed": true,
+      "violation_count": 0,
+      "examples": []
+    },
+    "02_claim_keysets_and_fields_identical": {
+      "passed": true,
+      "violation_count": 0,
+      "examples": []
+    },
+    "03_evidence_ids_resolve": {
+      "passed": true,
+      "violation_count": 0,
+      "examples": []
+    },
+    "04_available_claims_have_evidence": {
+      "passed": true,
+      "violation_count": 0,
+      "examples": []
+    },
+    "05_no_orphan_evidence": {
+      "passed": true,
+      "violation_count": 0,
+      "examples": []
+    },
+    "06_content_sha256_valid": {
+      "passed": true,
+      "violation_count": 0,
+      "examples": []
+    },
+    "07_evidence_id_matches_org": {
+      "passed": true,
+      "violation_count": 0,
+      "examples": []
+    },
+    "08_enum_values_allowed": {
+      "passed": true,
+      "violation_count": 0,
+      "examples": []
+    },
+    "09_org_numbers_unique_9_digit": {
+      "passed": true,
+      "violation_count": 0,
+      "examples": []
+    },
+    "10_completed_not_before_started": {
+      "passed": true,
+      "violation_count": 0,
+      "examples": []
+    },
+    "11_single_run_id": {
+      "passed": true,
+      "violation_count": 0,
+      "examples": []
+    },
+    "12_terminal_status_consistent_with_modules": {
+      "passed": true,
+      "violation_count": 0,
+      "examples": []
+    },
+    "13_expected_count": {
+      "passed": true,
+      "violation_count": 0,
+      "examples": []
+    },
+    "14_no_conversion_failures": {
+      "passed": true,
+      "violation_count": 0,
+      "examples": []
+    }
+  }
+}

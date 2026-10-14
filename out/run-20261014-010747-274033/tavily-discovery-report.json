@@ -1,0 +1,107 @@
+{
+  "generated_at": "2026-10-14T01:10:26.058014Z",
+  "started_at": "2026-10-14T01:08:36.672219Z",
+  "provider": "Tavily Search API",
+  "provider_name": "Tavily",
+  "provider_endpoint": "https://api.tavily.com/search",
+  "access_mode": "api_key",
+  "input_profiles": 9,
+  "queried_missing_website_profiles": 9,
+  "counts": {
+    "provider_requests": 9,
+    "provider_bytes": 125348,
+    "abstained_before_crawl": 8,
+    "independent_crawls": 1,
+    "crawl_requests": 6,
+    "quarantined_sites": 1
+  },
+  "provider_latency_ms": {
+    "p50": 12391,
+    "p95": 13014
+  },
+  "raw_search_results_persisted": false,
+  "promote_verified_enabled": true,
+  "qualification": "not_evaluated_on_500_org_external_final_corpus",
+  "discovery_metrics": {
+    "provider_name": "Tavily",
+    "eligible_count": 9,
+    "triggered_count": 9,
+    "successful_count": 0,
+    "failed_count": 0,
+    "abstained_count": 8,
+    "companies_attempted": [
+      "810034882",
+      "810059672",
+      "810094532",
+      "810098252",
+      "810105372",
+      "810130822",
+      "810182482",
+      "810202572",
+      "810274042"
+    ]
+  },
+  "company_outcomes": [
+    {
+      "organisation_number": "810034882",
+      "outcome": "abstained",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810059672",
+      "outcome": "abstained",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810094532",
+      "outcome": "abstained",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810098252",
+      "outcome": "abstained",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810105372",
+      "outcome": "abstained",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810130822",
+      "outcome": "quarantined",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810182482",
+      "outcome": "abstained",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810202572",
+      "outcome": "abstained",
+      "provider": "Tavily"
+    },
+    {
+      "organisation_number": "810274042",
+      "outcome": "abstained",
+      "provider": "Tavily"
+    }
+  ],
+  "eligible_count": 9,
+  "triggered_count": 9,
+  "successful_count": 0,
+  "failed_count": 0,
+  "abstained_count": 8,
+  "companies_attempted": [
+    "810034882",
+    "810059672",
+    "810094532",
+    "810098252",
+    "810105372",
+    "810130822",
+    "810182482",
+    "810202572",
+    "810274042"
+  ]
+}

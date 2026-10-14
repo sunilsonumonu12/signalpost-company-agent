@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "envelope_format": "public",
+  "rows": 9,
+  "status": "ok",
+  "run_id": "run-20261014-010747-274033",
+  "terminal_status_counts": {
+    "completed_with_gaps": 9
+  },
+  "claims_failed": 0,
+  "claims_failed_orgs": []
+}

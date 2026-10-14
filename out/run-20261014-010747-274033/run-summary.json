@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "run_id": "run-20261014-010747-274033",
+  "started_at": "2026-10-14T01:07:47Z",
+  "completed_at": "2026-10-14T01:11:55Z",
+  "stages_run": [
+    "registry_batch",
+    "tavily_discovery",
+    "exa_discovery",
+    "workforce_ocr",
+    "prior_year_financials",
+    "claims_conversion",
+    "envelope_validation"
+  ],
+  "profiles": "C:\\Users\\sunil.sonu\\Downloads\\signalpost-company-agent-main\\signalpost-company-agent-main\\out\\run-20261014-010747-274033\\profiles.jsonl",
+  "envelopes": "C:\\Users\\sunil.sonu\\Downloads\\signalpost-company-agent-main\\signalpost-company-agent-main\\out\\run-20261014-010747-274033\\envelopes.jsonl",
+  "validation_report": "C:\\Users\\sunil.sonu\\Downloads\\signalpost-company-agent-main\\signalpost-company-agent-main\\out\\run-20261014-010747-274033\\validation-report.json",
+  "metrics": "C:\\Users\\sunil.sonu\\Downloads\\signalpost-company-agent-main\\signalpost-company-agent-main\\out\\run-20261014-010747-274033\\run-metrics.json"
+}

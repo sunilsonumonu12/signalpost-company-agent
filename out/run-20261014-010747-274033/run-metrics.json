@@ -1,0 +1,561 @@
+{
+  "run_id": "run-20261014-010747-274033",
+  "started_at": "2026-10-14T01:07:47Z",
+  "completed_at": "2026-10-14T01:12:00Z",
+  "duration_ms": 253034,
+  "command": [
+    "C:\\Users\\sunil.sonu\\Downloads\\signalpost-company-agent-main\\signalpost-company-agent-main\\scripts\\run_agent.py",
+    "--organisations",
+    "C:\\Users\\sunil.sonu\\Downloads\\signalpost-company-agent-main\\signalpost-company-agent-main\\entry-companies.jsonl",
+    "--output-dir",
+    "C:\\Users\\sunil.sonu\\Downloads\\signalpost-company-agent-main\\signalpost-company-agent-main\\out\\run-20261014-010747-274033",
+    "--run-id",
+    "run-20261014-010747-274033",
+    "--expected-count",
+    "9",
+    "--include-workforce-ocr",
+    "--include-deep-crawl"
+  ],
+  "input": {
+    "input_file": "C:\\Users\\sunil.sonu\\Downloads\\signalpost-company-agent-main\\signalpost-company-agent-main\\entry-companies.jsonl",
+    "input_count": 9,
+    "processed_count": 9,
+    "success_count": 9,
+    "failed_count": 0,
+    "skipped_count": 0
+  },
+  "requests": {
+    "total_api_calls": 78,
+    "successful_calls": 70,
+    "failed_calls": 8,
+    "cache_hits": 0,
+    "cache_misses": 78,
+    "retry_attempts": 0,
+    "retry_successes": 0,
+    "by_failure_class": {
+      "not_found": 8,
+      "success": 70
+    },
+    "by_provider": {
+      "BRREG": {
+        "total": 54,
+        "successful": 46,
+        "failed": 8,
+        "cache_hits": 0,
+        "cache_misses": 54
+      },
+      "Exa": {
+        "total": 9,
+        "successful": 9,
+        "failed": 0,
+        "cache_hits": 0,
+        "cache_misses": 9
+      },
+      "Tavily": {
+        "total": 9,
+        "successful": 9,
+        "failed": 0,
+        "cache_hits": 0,
+        "cache_misses": 9
+      },
+      "website/http": {
+        "total": 6,
+        "successful": 6,
+        "failed": 0,
+        "cache_hits": 0,
+        "cache_misses": 6
+      }
+    },
+    "by_module": {
+      "financial_history": 9,
+      "financials": 9,
+      "group": 9,
+      "locations": 9,
+      "registry_live": 9,
+      "roles": 9,
+      "website": 6,
+      "website_discovery": 18
+    },
+    "discovery": [
+      {
+        "provider": "Exa",
+        "eligible_count": 9,
+        "triggered_count": 9,
+        "successful_count": 0,
+        "failed_count": 0,
+        "abstained_count": 9,
+        "companies_attempted": [
+          "810034882",
+          "810059672",
+          "810094532",
+          "810098252",
+          "810105372",
+          "810130822",
+          "810182482",
+          "810202572",
+          "810274042"
+        ],
+        "query_text_retained": false
+      },
+      {
+        "provider": "Tavily",
+        "eligible_count": 9,
+        "triggered_count": 9,
+        "successful_count": 0,
+        "failed_count": 0,
+        "abstained_count": 8,
+        "companies_attempted": [
+          "810034882",
+          "810059672",
+          "810094532",
+          "810098252",
+          "810105372",
+          "810130822",
+          "810182482",
+          "810202572",
+          "810274042"
+        ],
+        "query_text_retained": false
+      }
+    ]
+  },
+  "stages": [
+    {
+      "stage": "registry",
+      "started_at": "2026-10-14T01:07:47Z",
+      "completed_at": "2026-10-14T01:08:34Z",
+      "duration_ms": 47299,
+      "requests": 54,
+      "errors": 8,
+      "skipped": false
+    },
+    {
+      "stage": "tavily_discovery",
+      "started_at": "2026-10-14T01:08:34Z",
+      "completed_at": "2026-10-14T01:10:26Z",
+      "duration_ms": 111492,
+      "requests": 15,
+      "errors": 0,
+      "skipped": false
+    },
+    {
+      "stage": "exa_discovery",
+      "started_at": "2026-10-14T01:10:26Z",
+      "completed_at": "2026-10-14T01:11:14Z",
+      "duration_ms": 48055,
+      "requests": 9,
+      "errors": 0,
+      "skipped": false
+    },
+    {
+      "stage": "workforce_ocr",
+      "started_at": "2026-10-14T01:11:14Z",
+      "completed_at": "2026-10-14T01:11:54Z",
+      "duration_ms": 40357,
+      "requests": 0,
+      "errors": 0,
+      "skipped": false
+    },
+    {
+      "stage": "prior_year_financials",
+      "started_at": "2026-10-14T01:11:55Z",
+      "completed_at": "2026-10-14T01:11:55Z",
+      "duration_ms": 733,
+      "requests": 0,
+      "errors": 0,
+      "skipped": false
+    },
+    {
+      "stage": "claims_conversion",
+      "started_at": "2026-10-14T01:11:55Z",
+      "completed_at": "2026-10-14T01:11:58Z",
+      "duration_ms": 2763,
+      "requests": 0,
+      "errors": 0,
+      "skipped": false
+    },
+    {
+      "stage": "envelope_validation",
+      "started_at": "2026-10-14T01:11:58Z",
+      "completed_at": "2026-10-14T01:12:00Z",
+      "duration_ms": 1898,
+      "requests": 0,
+      "errors": 0,
+      "skipped": false
+    }
+  ],
+  "companies": {
+    "810059672": {
+      "duration_ms": 47523,
+      "sum_request_duration_ms": 47523,
+      "wall_clock_duration_ms": 159689,
+      "first_request_at": "2026-10-14T01:08:02.047004Z",
+      "last_request_at": "2026-10-14T01:10:41.736015Z",
+      "retry_attempt_count": 0,
+      "retry_success_count": 0,
+      "status": "completed_with_gaps",
+      "api_request_count": 8,
+      "cache_hit_count": 0,
+      "error_count": 1,
+      "stages_executed": [
+        "registry",
+        "discovery"
+      ],
+      "modules_executed": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "group",
+        "locations",
+        "website_discovery"
+      ],
+      "modules_succeeded": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "locations",
+        "website_discovery"
+      ],
+      "modules_not_found": [
+        "group"
+      ],
+      "modules_failed": [],
+      "discovery_attempted": true,
+      "discovery_provider": "Tavily",
+      "discovery_outcome": "searched"
+    },
+    "810274042": {
+      "duration_ms": 43920,
+      "sum_request_duration_ms": 43920,
+      "wall_clock_duration_ms": 191936,
+      "first_request_at": "2026-10-14T01:08:02.048423Z",
+      "last_request_at": "2026-10-14T01:11:13.984760Z",
+      "retry_attempt_count": 0,
+      "retry_success_count": 0,
+      "status": "completed_with_gaps",
+      "api_request_count": 8,
+      "cache_hit_count": 0,
+      "error_count": 1,
+      "stages_executed": [
+        "registry",
+        "discovery"
+      ],
+      "modules_executed": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "group",
+        "locations",
+        "website_discovery"
+      ],
+      "modules_succeeded": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "locations",
+        "website_discovery"
+      ],
+      "modules_not_found": [
+        "group"
+      ],
+      "modules_failed": [],
+      "discovery_attempted": true,
+      "discovery_provider": "Tavily",
+      "discovery_outcome": "searched"
+    },
+    "810034882": {
+      "duration_ms": 66961,
+      "sum_request_duration_ms": 66961,
+      "wall_clock_duration_ms": 158146,
+      "first_request_at": "2026-10-14T01:08:02.046559Z",
+      "last_request_at": "2026-10-14T01:10:40.193055Z",
+      "retry_attempt_count": 0,
+      "retry_success_count": 0,
+      "status": "completed_with_gaps",
+      "api_request_count": 8,
+      "cache_hit_count": 0,
+      "error_count": 1,
+      "stages_executed": [
+        "registry",
+        "discovery"
+      ],
+      "modules_executed": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "group",
+        "locations",
+        "website_discovery"
+      ],
+      "modules_succeeded": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "locations",
+        "website_discovery"
+      ],
+      "modules_not_found": [
+        "group"
+      ],
+      "modules_failed": [],
+      "discovery_attempted": true,
+      "discovery_provider": "Tavily",
+      "discovery_outcome": "searched"
+    },
+    "810105372": {
+      "duration_ms": 55859,
+      "sum_request_duration_ms": 55859,
+      "wall_clock_duration_ms": 174903,
+      "first_request_at": "2026-10-14T01:08:02.050840Z",
+      "last_request_at": "2026-10-14T01:10:56.953910Z",
+      "retry_attempt_count": 0,
+      "retry_success_count": 0,
+      "status": "completed_with_gaps",
+      "api_request_count": 8,
+      "cache_hit_count": 0,
+      "error_count": 1,
+      "stages_executed": [
+        "registry",
+        "discovery"
+      ],
+      "modules_executed": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "group",
+        "locations",
+        "website_discovery"
+      ],
+      "modules_succeeded": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "locations",
+        "website_discovery"
+      ],
+      "modules_not_found": [
+        "group"
+      ],
+      "modules_failed": [],
+      "discovery_attempted": true,
+      "discovery_provider": "Tavily",
+      "discovery_outcome": "searched"
+    },
+    "810202572": {
+      "duration_ms": 32936,
+      "sum_request_duration_ms": 32936,
+      "wall_clock_duration_ms": 190355,
+      "first_request_at": "2026-10-14T01:08:02.050276Z",
+      "last_request_at": "2026-10-14T01:11:12.405860Z",
+      "retry_attempt_count": 0,
+      "retry_success_count": 0,
+      "status": "completed_with_gaps",
+      "api_request_count": 8,
+      "cache_hit_count": 0,
+      "error_count": 1,
+      "stages_executed": [
+        "registry",
+        "discovery"
+      ],
+      "modules_executed": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "group",
+        "locations",
+        "website_discovery"
+      ],
+      "modules_succeeded": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "locations",
+        "website_discovery"
+      ],
+      "modules_not_found": [
+        "group"
+      ],
+      "modules_failed": [],
+      "discovery_attempted": true,
+      "discovery_provider": "Tavily",
+      "discovery_outcome": "searched"
+    },
+    "810094532": {
+      "duration_ms": 57727,
+      "sum_request_duration_ms": 57727,
+      "wall_clock_duration_ms": 161371,
+      "first_request_at": "2026-10-14T01:08:02.054192Z",
+      "last_request_at": "2026-10-14T01:10:43.425730Z",
+      "retry_attempt_count": 0,
+      "retry_success_count": 0,
+      "status": "completed",
+      "api_request_count": 8,
+      "cache_hit_count": 0,
+      "error_count": 0,
+      "stages_executed": [
+        "registry",
+        "discovery"
+      ],
+      "modules_executed": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "group",
+        "locations",
+        "website_discovery"
+      ],
+      "modules_succeeded": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "group",
+        "locations",
+        "website_discovery"
+      ],
+      "modules_not_found": [],
+      "modules_failed": [],
+      "discovery_attempted": true,
+      "discovery_provider": "Tavily",
+      "discovery_outcome": "searched"
+    },
+    "810130822": {
+      "duration_ms": 42634,
+      "sum_request_duration_ms": 42634,
+      "wall_clock_duration_ms": 176507,
+      "first_request_at": "2026-10-14T01:08:02.053966Z",
+      "last_request_at": "2026-10-14T01:10:58.561813Z",
+      "retry_attempt_count": 0,
+      "retry_success_count": 0,
+      "status": "completed_with_gaps",
+      "api_request_count": 14,
+      "cache_hit_count": 0,
+      "error_count": 1,
+      "stages_executed": [
+        "registry",
+        "discovery"
+      ],
+      "modules_executed": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "group",
+        "locations",
+        "website_discovery",
+        "website"
+      ],
+      "modules_succeeded": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "locations",
+        "website_discovery",
+        "website"
+      ],
+      "modules_not_found": [
+        "group"
+      ],
+      "modules_failed": [],
+      "discovery_attempted": true,
+      "discovery_provider": "Tavily",
+      "discovery_outcome": "quarantined"
+    },
+    "810182482": {
+      "duration_ms": 55058,
+      "sum_request_duration_ms": 55058,
+      "wall_clock_duration_ms": 188856,
+      "first_request_at": "2026-10-14T01:08:02.056195Z",
+      "last_request_at": "2026-10-14T01:11:10.912558Z",
+      "retry_attempt_count": 0,
+      "retry_success_count": 0,
+      "status": "completed_with_gaps",
+      "api_request_count": 8,
+      "cache_hit_count": 0,
+      "error_count": 1,
+      "stages_executed": [
+        "registry",
+        "discovery"
+      ],
+      "modules_executed": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "group",
+        "locations",
+        "website_discovery"
+      ],
+      "modules_succeeded": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "locations",
+        "website_discovery"
+      ],
+      "modules_not_found": [
+        "group"
+      ],
+      "modules_failed": [],
+      "discovery_attempted": true,
+      "discovery_provider": "Tavily",
+      "discovery_outcome": "searched"
+    },
+    "810098252": {
+      "duration_ms": 56460,
+      "sum_request_duration_ms": 56460,
+      "wall_clock_duration_ms": 173387,
+      "first_request_at": "2026-10-14T01:08:02.063215Z",
+      "last_request_at": "2026-10-14T01:10:55.450741Z",
+      "retry_attempt_count": 0,
+      "retry_success_count": 0,
+      "status": "completed_with_gaps",
+      "api_request_count": 8,
+      "cache_hit_count": 0,
+      "error_count": 1,
+      "stages_executed": [
+        "registry",
+        "discovery"
+      ],
+      "modules_executed": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "group",
+        "locations",
+        "website_discovery"
+      ],
+      "modules_succeeded": [
+        "registry_live",
+        "financials",
+        "financial_history",
+        "roles",
+        "locations",
+        "website_discovery"
+      ],
+      "modules_not_found": [
+        "group"
+      ],
+      "modules_failed": [],
+      "discovery_attempted": true,
+      "discovery_provider": "Tavily",
+      "discovery_outcome": "searched"
+    }
+  },
+  "request_log": "request-log.jsonl",
+  "schema_version": "1.0"
+}

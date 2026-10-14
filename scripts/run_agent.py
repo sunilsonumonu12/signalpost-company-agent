@@ -30,7 +30,6 @@ without them there is no submission at all.
 from __future__ import annotations
 
 import argparse
-<<<<<<< HEAD
 import hashlib
 import json
 import os
@@ -39,14 +38,6 @@ import subprocess
 import sys
 import time
 import uuid
-=======
-import json
-import os
-import shutil
-import subprocess
-import sys
-import time
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -55,10 +46,7 @@ ARCHIVE_ROOT = PROJECT_ROOT / "archive" / "v2-crawler"
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from norway_company_agent.env import load_local_env  # noqa: E402
 from norway_company_agent.telemetry import aggregate_company_metrics, apply_discovery_report, build_metrics, read_events  # noqa: E402
-<<<<<<< HEAD
 from norway_company_agent.vocabulary import SCHEMA_VERSION  # noqa: E402
-=======
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 
 
 def run(cmd: list[str], *, optional: bool = False) -> bool:
@@ -79,7 +67,6 @@ def read_jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-<<<<<<< HEAD
 def atomic_write_text(path: Path, value: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
@@ -183,13 +170,6 @@ def stage_output_paths(cmd: list[str]) -> list[Path]:
         else:
             index += 1
     return result
-=======
-def write_jsonl(path: Path, rows: list[dict]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 
 
 def merge_profiles(base: list[dict], updated: list[dict], *, only_if_has: str | None = None) -> int:
@@ -223,10 +203,6 @@ def main() -> None:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--expected-count", type=int, required=True)
-<<<<<<< HEAD
-=======
-    parser.add_argument("--overwrite", action="store_true", help="Replace existing output for this run ID")
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
     parser.add_argument("--discovery-limit", type=int, default=None, help="Cap discovery queries; default is expected-count")
     parser.add_argument("--skip-deep-crawl", dest="skip_deep_crawl", action="store_true", default=False, help="Skip the scrapy multi-page crawl stage")
     parser.add_argument("--include-deep-crawl", dest="skip_deep_crawl", action="store_false", help="Enable the crawler (default)")
@@ -236,7 +212,6 @@ def main() -> None:
     args = parser.parse_args()
 
     load_local_env(PROJECT_ROOT)
-<<<<<<< HEAD
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", args.run_id) or args.run_id in {".", ".."}:
         parser.error("--run-id may contain only letters, digits, dot, underscore, and hyphen")
     output_dir = Path(args.output_dir).resolve()
@@ -251,36 +226,6 @@ def main() -> None:
     os.environ["SIGNALPOST_OUTPUT_DIR"] = str(output_dir.resolve())
     os.environ["SIGNALPOST_CRAWL_TRACE_PATH"] = str((output_dir / "crawl-trace.jsonl").resolve())
     os.environ["SIGNALPOST_QUARANTINE_PATH"] = str((output_dir / "validation-quarantine.jsonl").resolve())
-=======
-    output_dir = Path(args.output_dir)
-    request_log = output_dir / "request-log.jsonl"
-    existing_output = output_dir.exists() and any(output_dir.iterdir())
-    if existing_output and args.overwrite:
-        print(f'Overwriting existing output for run_id "{args.run_id}" at {output_dir}.', file=sys.stderr)
-        for child in output_dir.iterdir():
-            if child.is_dir():
-                shutil.rmtree(child)
-            else:
-                child.unlink()
-    elif existing_output:
-        original_output_dir = output_dir
-        duplicate_index = 1
-        while True:
-            candidate = original_output_dir.parent / f"{original_output_dir.name}-duplicate-{duplicate_index}"
-            if not candidate.exists():
-                output_dir = candidate
-                request_log = output_dir / "request-log.jsonl"
-                print(
-                    f'Run ID "{args.run_id}" already has output at {original_output_dir}; '
-                    f"saving this duplicate run in {output_dir}.",
-                    file=sys.stderr,
-                )
-                break
-            duplicate_index += 1
-    output_dir.mkdir(parents=True, exist_ok=True)
-    os.environ["SIGNALPOST_REQUEST_LOG"] = str(request_log)
-    os.environ["SIGNALPOST_SNAPSHOT_DIR"] = str((output_dir / "snapshots").resolve())
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
     os.environ["SIGNALPOST_RUN_ID"] = args.run_id
     os.environ["SIGNALPOST_CALLER_MODULE"] = "run_agent"
     discovery_limit = args.discovery_limit or args.expected_count
@@ -291,7 +236,6 @@ def main() -> None:
     discovery_reports: list[dict] = []   # Step 3: one entry per provider that ran
 
     def run_stage(name: str, cmd: list[str], *, optional: bool = False) -> bool:
-<<<<<<< HEAD
         marker_dir = output_dir / "stages"
         marker_dir.mkdir(parents=True, exist_ok=True)
         marker_name = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-_") or "stage"
@@ -347,25 +291,6 @@ def main() -> None:
     # locations, single-page website. Required. Keep this artifact immutable so
     # later merged profiles cannot invalidate the registry-stage marker.
     profiles_path = output_dir / "profiles-stage1.jsonl"
-=======
-        (output_dir / "progress-stage.txt").write_text(name + "\n", encoding="utf-8")
-        stage_started = time.monotonic()
-        stage_started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        ok = run(cmd, optional=optional)
-        stage_metrics.append({
-            "stage": name,
-            "started_at": stage_started_at,
-            "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "duration_ms": int((time.monotonic() - stage_started) * 1000),
-            "requests": 0,
-            "errors": 0,
-        })
-        return ok
-
-    # 1. Registry batch: identity, financials, financial_history, roles, group,
-    # locations, single-page website. Required.
-    profiles_path = output_dir / "profiles.jsonl"
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
     run_stage("registry", [
         args.python, str(ROOT / "run_competition_batch.py"),
         "--organisations", args.organisations,
@@ -386,11 +311,7 @@ def main() -> None:
             continue
         discovered_path = output_dir / f"profiles-with-{name}.jsonl"
         discovery_report_path = output_dir / f"{name}-discovery-report.json"
-<<<<<<< HEAD
         ok = run_stage(f"{name}_discovery", [
-=======
-        ok = run_stage("discovery", [
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
             args.python, str(ARCHIVE_ROOT / script),
             "--input", str(profiles_path),
             "--output", str(discovered_path),
@@ -433,23 +354,14 @@ def main() -> None:
     if has_scrapy:
         crawl_input = output_dir / "crawl-input.jsonl"
         write_jsonl(crawl_input, [row for row in profiles if row.get("website")])
-<<<<<<< HEAD
         crawl_jobdir = crawl_jobdir_root / path_sha256(crawl_input)
         crawled_path = output_dir / "profiles-crawled.jsonl"
         ok = run_stage("deep_crawl", [
-=======
-        crawled_path = output_dir / "profiles-crawled.jsonl"
-        ok = run_stage("crawling", [
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
             args.python, str(ARCHIVE_ROOT / "run_scrapy_websites.py"),
             "--input", str(crawl_input),
             "--output", str(crawled_path),
             "--events", str(output_dir / "crawl-events.jsonl"),
-<<<<<<< HEAD
             "--jobdir", str(crawl_jobdir),
-=======
-            "--jobdir", str(output_dir / "crawl-jobdir"),
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
             "--report", str(output_dir / "crawl-report.json"),
             "--forensics", str(output_dir / "website-forensics.jsonl"),
         ], optional=True)
@@ -461,15 +373,9 @@ def main() -> None:
 
             # 4. Activity/news extraction from the deepened crawl. Pure Python,
             # always attempted once there's a crawl to extract from.
-<<<<<<< HEAD
             run_stage("site_activity", [args.python, str(ARCHIVE_ROOT / "extract_company_site_activity.py"), "--profiles", str(profiles_path), "--output", str(activity_obs_path), "--report", str(output_dir / "activity-report.json")], optional=True)
             run_stage("site_news", [args.python, str(ARCHIVE_ROOT / "extract_company_site_news.py"), "--profiles", str(profiles_path), "--output", str(news_obs_path), "--report", str(output_dir / "news-report.json")], optional=True)
             run_stage("site_careers", [args.python, str(ARCHIVE_ROOT / "extract_company_site_careers.py"), "--profiles", str(profiles_path), "--output", str(careers_obs_path), "--report", str(output_dir / "careers-report.json")], optional=True)
-=======
-            run_stage("claims/evidence", [args.python, str(ARCHIVE_ROOT / "extract_company_site_activity.py"), "--profiles", str(profiles_path), "--output", str(activity_obs_path), "--report", str(output_dir / "activity-report.json")], optional=True)
-            run_stage("claims/evidence", [args.python, str(ARCHIVE_ROOT / "extract_company_site_news.py"), "--profiles", str(profiles_path), "--output", str(news_obs_path), "--report", str(output_dir / "news-report.json")], optional=True)
-            run_stage("claims/evidence", [args.python, str(ARCHIVE_ROOT / "extract_company_site_careers.py"), "--profiles", str(profiles_path), "--output", str(careers_obs_path), "--report", str(output_dir / "careers-report.json")], optional=True)
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
             if activity_obs_path.exists():
                 stages_run.append("site_activity")
             if news_obs_path.exists():
@@ -486,22 +392,13 @@ def main() -> None:
     workforce_obs_path = output_dir / "workforce-observations.jsonl"
     if not args.skip_workforce_ocr:
         orgs_path = output_dir / "all-orgs.txt"
-<<<<<<< HEAD
         atomic_write_text(orgs_path, "\n".join(row["organisation_number"] for row in profiles))
         ok = run_stage("workforce_ocr", [
-=======
-        orgs_path.write_text("\n".join(row["organisation_number"] for row in profiles), encoding="utf-8")
-        ok = run([
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
             args.python, str(ARCHIVE_ROOT / "run_annual_report_workforce_connector.py"),
             "--profiles", str(profiles_path),
             "--organisations", str(orgs_path),
             "--output", str(workforce_obs_path),
-<<<<<<< HEAD
             "--cache", str(workforce_cache_dir),
-=======
-            "--cache", str(output_dir / "workforce-cache"),
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
             "--report", str(output_dir / "workforce-report.json"),
         ], optional=True)
         if ok:
@@ -511,14 +408,8 @@ def main() -> None:
     # annual-report OCR cache the workforce stage just populated -- no new
     # downloads or OCR, so this only runs if that cache exists.
     prior_year_obs_path = output_dir / "prior-year-financials-observations.jsonl"
-<<<<<<< HEAD
     if not args.skip_workforce_ocr and workforce_cache_dir.exists():
         ok = run_stage("prior_year_financials", [
-=======
-    workforce_cache_dir = output_dir / "workforce-cache"
-    if not args.skip_workforce_ocr and workforce_cache_dir.exists():
-        ok = run([
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
             args.python, str(ARCHIVE_ROOT / "extract_prior_year_financials.py"),
             "--profiles", str(profiles_path),
             "--cache", str(workforce_cache_dir),
@@ -544,7 +435,6 @@ def main() -> None:
     for obs_path in (activity_obs_path, news_obs_path, careers_obs_path, workforce_obs_path, prior_year_obs_path):
         if obs_path.exists():
             convert_cmd += ["--observations", str(obs_path)]
-<<<<<<< HEAD
     run_stage("claims_conversion", convert_cmd)
     stages_run.append("claims_conversion")
 
@@ -563,43 +453,16 @@ def main() -> None:
 
     summary = {
         "schema_version": SCHEMA_VERSION,
-=======
-    run_stage("claims/evidence", convert_cmd)
-    stages_run.append("claims_conversion")
-
-    # 7. Offline HTML viewer -- best-effort, never blocks the submission artifact.
-    viewer_builder = ROOT / "build_viewer.py"
-    if viewer_builder.exists():
-        viewer_path = output_dir / "viewer.html"
-        ok = run_stage("output", [
-            args.python, str(viewer_builder),
-            "--envelopes", str(envelopes_path),
-            "--profiles", str(profiles_path),
-            "--output", str(viewer_path),
-        ], optional=True)
-        if ok:
-            stages_run.append("viewer")
-    else:
-        print("Offline viewer builder not found -- skipping viewer.", file=sys.stderr)
-
-    summary = {
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
         "run_id": args.run_id,
         "started_at": started_at,
         "completed_at": completed_at,
         "stages_run": stages_run,
         "profiles": str(profiles_path),
         "envelopes": str(envelopes_path),
-<<<<<<< HEAD
         "validation_report": str(validation_report_path),
         "metrics": str(output_dir / "run-metrics.json"),
     }
     atomic_write_json(output_dir / "run-summary.json", summary)
-=======
-        "metrics": str(output_dir / "run-metrics.json"),
-    }
-    (output_dir / "run-summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
     completed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     all_events = read_events(request_log)
     foreign_run_ids = sorted({str(event.get("run_id")) for event in all_events if event.get("run_id") != args.run_id})
@@ -618,12 +481,8 @@ def main() -> None:
         apply_discovery_report(companies, discovery_report)
     metrics = build_metrics(events=events, run_id=args.run_id, input_file=args.organisations, input_count=args.expected_count, started_at=started_at, completed_at=completed_at, duration_ms=int((time.monotonic() - started_monotonic) * 1000), stage_metrics=stage_metrics, per_company=companies, command=sys.argv, discovery_reports=discovery_reports)
     metrics["stages"] = [{**stage, "requests": sum(1 for event in events if event.get("timestamp", "") >= stage["started_at"] and event.get("timestamp", "") <= stage["completed_at"]), "errors": sum(1 for event in events if not event.get("success") and event.get("timestamp", "") >= stage["started_at"] and event.get("timestamp", "") <= stage["completed_at"])} for stage in stage_metrics]
-<<<<<<< HEAD
     metrics["schema_version"] = SCHEMA_VERSION
     atomic_write_json(output_dir / "run-metrics.json", metrics)
-=======
-    (output_dir / "run-metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
     print(json.dumps(summary, indent=2))
 
 

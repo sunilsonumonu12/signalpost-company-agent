@@ -1,0 +1,1834 @@
+diff --git a/.env.example b/.env.example
+index 9d92a7a..d180195 100644
+--- a/.env.example
++++ b/.env.example
+@@ -6,4 +6,10 @@ TAVILY_USD_PER_CREDIT=0.005
+ # Optional: project-specific runtime settings
+ # SIGNALPOST_REQUEST_LOG=
+ # SIGNALPOST_SNAPSHOT_DIR=
+-# SIGNALPOST_RUN_ID=
+\ No newline at end of file
++# SIGNALPOST_RUN_ID=
++
++# Phase 4: BRREG rate limiter. JSON object {rule_name: min_seconds_between_request_starts}.
++# Empty (default) = proactive spacing OFF (shipped sample run had 0 HTTP 429 responses).
++# 429 handling (Retry-After, shared back-off across threads) is always on regardless.
++# Only rule today: brreg_history (annual-account year list). Example: {"brreg_history": 2.1}
++SIGNALPOST_RATE_LIMITS=
+diff --git a/PHASE_4_NOTES.md b/PHASE_4_NOTES.md
+new file mode 100644
+index 0000000..e444204
+--- /dev/null
++++ b/PHASE_4_NOTES.md
+@@ -0,0 +1,59 @@
++# PHASE 4 NOTES
++
++## Base state (read this first)
++
++The zip given for Phase 4 still contained **unresolved git merge conflict markers** (`<<<<<<< HEAD`) in 7 Python
++files and `requirements.txt`, committed in HEAD. Nothing imported. They are resolved as **Part 0**
++(`signalpost-phase4-part0-conflicts.patch`): always the HEAD side, which is byte-identical (EOL-normalised) to
++commit `978e036` (Phase 3). Baseline after Part 0: `pytest tests` = 77 passed.
++Not touched (out of scope, still contain markers): `README.md`, `docs/*.md`, `entry-companies.jsonl`,
++`out/latest-run/*` sample artifacts (incl. `request-log.jsonl`, `profiles.jsonl`, `all-orgs.txt`).
++
++## Answers U1 to U8
++
++- U1 Log line fields: timestamp, run_id, organisation_number, module, provider, operation, event_type, caller_module, success, http_status, duration_ms, cache_hit, cache_miss, attempt, retry, [error], [retry_reason], failure_class. **No bytes, no cost, no connector.** The spec's "requests_by_connector" and per-line cost formula did NOT exist; `build_metrics` only had by_provider / by_module. Added: optional `bytes` and `cost_usd` on log lines, `connector_for()`, `event_cost_usd()`, and run-level `requests.by_connector / bytes / third_party_cost_usd`, all from the same helpers.
++- U2 Every attempt (including retries) already wrote its own log line (`attempt`, `retry`). One line = one HTTP attempt. Retries count as requests, consistently everywhere.
++- U3 Scrapy did NOT write to the request log. Fixed: `OperationalTelemetryMiddleware` now logs each response/exception (org from `request.meta`; Scrapy's own robots.txt requests have no meta, so the host is mapped to the company that first requested it; unmapped = null org and shows up as unattributed).
++- U4 OCR PDF download used raw `urllib`, unlogged. Fixed: logged as module `annual_report_pdf`, provider BRREG, with bytes. It is **not** covered by the rate limiter (raw urllib, outside `fetch_json`).
++- U5 `output_contract._operations()` returned 3 keys (requests, runtime_ms, third_party_cost_usd). Now returns 7 keys. `schema_version` stays "1.0": the validator checks the constant, no bump was forced. `tests/test_phase3_envelope.py` asserted the 3-key set; updated to the new shape (intentional).
++- U6 The rate-limited endpoint in `official._fetch_history()` is `BRREG_ACCOUNT_YEARS` = `data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/{org}/aar`. Rule matches that path only (not the PDF copy path, not other BRREG endpoints). `_fetch_history`/`_reserve_history_slot` in official.py left untouched (dead code, out of scope).
++- U7 No file locking, only an in-process `threading.Lock`. Fine: stages are sequential processes. Same approach for `company-spans.jsonl`.
++- U8 Stage 4 extractors and 5b make no HTTP calls (no `urlopen`/`record_request` in them). No change.
++
++Other finding (not fixed): `telemetry.read_events()` raises on any malformed log line, so a corrupt log crashes the end of `run_agent`. `build_operations_by_org` is tolerant (counts `malformed`).
++
++## Baseline 429 count (Step 0)
++
++Shipped sample `out/latest-run/request-log.jsonl`: 299 parsable lines (+3 conflict-marker lines), statuses 200: 260, 404: 39, **429: 0**.
++Therefore `brreg_history` ships with `min_interval_s = 0.0` (spacing OFF). 429 handling is always on. Zero 429 in one run proves only that it was not hit, not that the 30/min limit does not exist.
++
++## What changed
++
++- `telemetry.py`: `company_context`, `current_organisation`, `company_span`, `record_request(bytes_received, cost_usd, org fallback)`, `connector_for`, `event_cost_usd`, `summarize_requests`, `build_operations_by_org`, `reconcile_operations_report`, `empty_operations`.
++- `rate_limit.py` (new, no internal imports): `RateLimiter` (burst 1), `limiter_for`, `parse_retry_after`, `SIGNALPOST_RATE_LIMITS`.
++- `http.py`: limiter per attempt; 429 honours `Retry-After` (cap 120 s, else current backoff), penalizes the shared limiter, retries inside the existing 3-attempt budget; exhausted 429 gives `error="HTTP 429 rate_limited"` which becomes the evidence note. 404/410 unchanged. Bytes logged on every line that has a body.
++- Stage 1 `collect_profile` is now a wrapper entering `company_context` + `company_span("registry")` inside the worker, around the renamed `_collect_profile_inner` (incl. its except path).
++- Tavily/Exa: context + span around the search call and the candidate `fetch_website`; `cost_usd` and bytes on the log line (Exa `costDollars.total`; Tavily `usage.credits x TAVILY_USD_PER_CREDIT`, same formula as `discovery.py`, 0 when no usage block).
++- OCR connector: `collect_attributed` worker wrapper (context + span), PDF download logging.
++- Stage 6 (`build_output_contract.py`): loads operations once; `--request-log/--spans-log/--operations-report`; no log = zeros, `source: "unavailable"`; writes `operations-report.json`. `run_agent.py` sets `SIGNALPOST_SPANS_LOG`, passes the paths, and completes the report with `reconcile_operations_report` after `run-metrics.json` exists (stage 6 runs before it). `run.py` copies the report to `result/`.
++- `validate_envelopes.py`: operations keys/types checked inside the existing keyset check (no new check name).
++- `scripts/validate_operations.py`, `tests/test_phase4_*.py`, `.env.example`.
++
++## Honest limits
++
++- `result/operations-report.json` `uncovered_stages` is `[]` because Scrapy and PDF downloads are now logged. Only unit-tested (fake request/response objects); **never run against a real Scrapy crawl here**.
++- **The full pipeline was NOT run.** No network to BRREG/Tavily/Exa in the build sandbox. Checks 3-5 and 7-8, 11 were run on shipped sample data (9 of 20 profiles survived the mangled sample file, log filtered to those 9 orgs, bytes/cost synthetic): all pass, `reconciled: true`. Check 9 skipped (no interval). Check 11 on a real 20-org run: **still to do on your machine**.
++- Check 6 (context leak) cannot be proven from a log: lines have no URL. Covered by the 12-thread/100-task unit test, which would fail if the context leaked.
++- Check 10 is covered by pytest with a stubbed `urlopen`, not a real fake HTTP server.
++- Tavily cost is 0 unless the API response includes `usage.credits` and `TAVILY_USD_PER_CREDIT` is set.
++- Retry cost under Phase 2 resume is counted, not de-duplicated (as specified).
++- Fat format (`--envelope-format fat`) gets no `operations`.
++- `runtime_ms` only exists for stages that open a span: registry, discovery, workforce_ocr. Scrapy crawl wall-clock is not attributed per company (Twisted, shared concurrency).
++
++## Commands (this sandbox)
++
++```
++PYTHONPATH=src python -m pytest tests -q        # before: 77 passed (after Part 0) | after: 96 passed
++python scripts/validate_operations.py --run-dir <dir> --envelopes <envelopes.jsonl>
++python run.py --organisations entry-companies.jsonl       # run this yourself; needs network
++```
+diff --git a/archive/v2-crawler/run_annual_report_workforce_connector.py b/archive/v2-crawler/run_annual_report_workforce_connector.py
+index 2ae5210..007f220 100644
+--- a/archive/v2-crawler/run_annual_report_workforce_connector.py
++++ b/archive/v2-crawler/run_annual_report_workforce_connector.py
+@@ -8,7 +8,9 @@ import json
+ import re
+ import shutil
+ import subprocess
++import sys
+ import tempfile
++import time
+ import urllib.request
+ from concurrent.futures import ThreadPoolExecutor, as_completed
+ from datetime import datetime, timezone
+@@ -16,6 +18,12 @@ from pathlib import Path
+ 
+ from pypdf import PdfReader
+ 
++PROJECT_ROOT = Path(__file__).resolve().parents[2]
++if str(PROJECT_ROOT / "src") not in sys.path:
++    sys.path.insert(0, str(PROJECT_ROOT / "src"))
++
++from norway_company_agent.telemetry import company_context, company_span, record_request  # noqa: E402
++
+ 
+ UA = "SignalpostResearchPOC/1.0 (+https://builderr.ai)"
+ # Keep whitespace inside valid three-digit groups only; adjacent year values stay separate.
+@@ -167,8 +175,17 @@ def collect(profile: dict, cache_dir: Path, *, ocr_pages: int, ocr_dpi: int) ->
+             cache_hit = True
+         else:
+             request = urllib.request.Request(url, headers={"User-Agent": UA})
+-            with urllib.request.urlopen(request, timeout=90) as response:
+-                raw = response.read(20_000_001)
++            download_started = time.monotonic()
++            try:
++                with urllib.request.urlopen(request, timeout=90) as response:
++                    raw = response.read(20_000_001)
++                    pdf_status = response.status
++            except Exception as exc:
++                # Phase 4: PDF downloads bypass http.fetch_json (raw urllib), so they are logged
++                # here to keep operations complete. They are NOT covered by the rate limiter.
++                record_request(module="annual_report_pdf", provider="BRREG", operation="GET annual_report_pdf", success=False, status=getattr(exc, "code", 0), duration_ms=int((time.monotonic() - download_started) * 1000), organisation_number=org, error=type(exc).__name__)
++                raise
++            record_request(module="annual_report_pdf", provider="BRREG", operation="GET annual_report_pdf", success=True, status=pdf_status, duration_ms=int((time.monotonic() - download_started) * 1000), organisation_number=org, bytes_received=len(raw))
+             if len(raw) > 20_000_000 or not raw.startswith(b"%PDF"):
+                 return None, {"organisation_number": org, "status": "unsupported_pdf", "bytes": len(raw)}
+             cache_path.write_bytes(raw)
+@@ -250,6 +267,13 @@ def collect(profile: dict, cache_dir: Path, *, ocr_pages: int, ocr_dpi: int) ->
+         return None, {"organisation_number": org, "status": "error", "error": f"{type(exc).__name__}: {str(exc)[:180]}", "report_year": str(latest.get("year") or "") if "latest" in locals() else None, "source_url": url if "url" in locals() else None}
+ 
+ 
++def collect_attributed(profile: dict, cache_dir: Path, *, ocr_pages: int, ocr_dpi: int) -> tuple[dict | None, dict]:
++    """Worker entry point. Runs on a pool thread, so the company context is entered here."""
++    org = str(profile["organisation_number"])
++    with company_context(org), company_span(org, "workforce_ocr"):
++        return collect(profile, cache_dir, ocr_pages=ocr_pages, ocr_dpi=ocr_dpi)
++
++
+ def main() -> None:
+     parser = argparse.ArgumentParser(description="Extract conservative company-scope workforce counts from official annual-report PDFs.")
+     parser.add_argument("--profiles", required=True)
+@@ -276,7 +300,7 @@ def main() -> None:
+     collected = {}
+     with ThreadPoolExecutor(max_workers=args.workers) as pool:
+         futures = {
+-            pool.submit(collect, profile, cache_dir, ocr_pages=args.ocr_pages, ocr_dpi=args.ocr_dpi): str(profile["organisation_number"])
++            pool.submit(collect_attributed, profile, cache_dir, ocr_pages=args.ocr_pages, ocr_dpi=args.ocr_dpi): str(profile["organisation_number"])
+             for profile in eligible
+         }
+         for future in as_completed(futures):
+diff --git a/archive/v2-crawler/run_exa_discovery.py b/archive/v2-crawler/run_exa_discovery.py
+index 30b9e7e..35cc480 100644
+--- a/archive/v2-crawler/run_exa_discovery.py
++++ b/archive/v2-crawler/run_exa_discovery.py
+@@ -23,7 +23,7 @@ from norway_company_agent.discovery import build_company_search_query, choose_se
+ from norway_company_agent.evidence import evidence, utc_now  # noqa: E402
+ from norway_company_agent.identity import apply_website_identity_gate  # noqa: E402
+ from norway_company_agent.website import fetch_website  # noqa: E402
+-from norway_company_agent.telemetry import record_request  # noqa: E402
++from norway_company_agent.telemetry import company_context, company_span, record_request  # noqa: E402
+ 
+ EXA_ENDPOINT = "https://api.exa.ai/search"
+ 
+@@ -66,9 +66,9 @@ def exa_search(profile: dict, *, api_key: str, timeout: float, num_results: int,
+         with urllib.request.urlopen(request, timeout=timeout) as response:
+             raw = response.read()
+         elapsed_ms = int((time.monotonic() - started) * 1000)
+-        record_request(module="website_discovery", provider="Exa", operation="POST search", success=True, status=response.status, duration_ms=elapsed_ms, organisation_number=profile.get("organisation_number"))
+         payload = json.loads(raw)
+         cost = float(((payload.get("costDollars") or {}).get("total")) or 0.0)
++        record_request(module="website_discovery", provider="Exa", operation="POST search", success=True, status=response.status, duration_ms=elapsed_ms, organisation_number=profile.get("organisation_number"), bytes_received=len(raw), cost_usd=cost)
+         return parse_exa_web_results(payload, query=query), {
+             "status": response.status,
+             "latency_ms": elapsed_ms,
+@@ -157,7 +157,8 @@ def main() -> None:
+         eligible_count += 1
+         queried += 1
+         companies_attempted.append(org)
+-        results, operation, cost = exa_search(search_profile, api_key=api_key, timeout=args.timeout, num_results=args.num_results, search_type=args.search_type)
++        with company_context(org), company_span(org, "discovery"):
++            results, operation, cost = exa_search(search_profile, api_key=api_key, timeout=args.timeout, num_results=args.num_results, search_type=args.search_type)
+         total_cost += cost
+         provider_latencies.append(operation["latency_ms"])
+         counts["provider_requests"] += 1
+@@ -193,7 +194,8 @@ def main() -> None:
+             time.sleep(args.min_interval)
+             continue
+ 
+-        website, web_ops = fetch_website(selected["url"], timeout=args.timeout, organisation_number=row.get("organisation_number"))
++        with company_context(org), company_span(org, "discovery"):
++            website, web_ops = fetch_website(selected["url"], timeout=args.timeout, organisation_number=row.get("organisation_number"))
+         gated = apply_website_identity_gate(search_profile, website)
+         website = gated["website"]
+         assessment = gated["assessment"]
+diff --git a/archive/v2-crawler/run_tavily_discovery.py b/archive/v2-crawler/run_tavily_discovery.py
+index 582c39d..b944137 100644
+--- a/archive/v2-crawler/run_tavily_discovery.py
++++ b/archive/v2-crawler/run_tavily_discovery.py
+@@ -23,7 +23,7 @@ from norway_company_agent.discovery import build_company_search_query, choose_se
+ from norway_company_agent.evidence import evidence, utc_now  # noqa: E402
+ from norway_company_agent.identity import apply_website_identity_gate  # noqa: E402
+ from norway_company_agent.website import fetch_website  # noqa: E402
+-from norway_company_agent.telemetry import record_request  # noqa: E402
++from norway_company_agent.telemetry import company_context, company_span, record_request  # noqa: E402
+ 
+ TAVILY_ENDPOINT = "https://api.tavily.com/search"
+ 
+@@ -61,8 +61,14 @@ def tavily_search(profile: dict, *, api_key: str | None, timeout: float, max_res
+         with urllib.request.urlopen(request, timeout=timeout) as response:
+             raw = response.read()
+         elapsed_ms = int((time.monotonic() - started) * 1000)
+-        record_request(module="website_discovery", provider="Tavily", operation="POST search", success=True, status=response.status, duration_ms=elapsed_ms, organisation_number=profile.get("organisation_number"))
+         payload = json.loads(raw)
++        # Same formula as discovery.py: usage.credits x TAVILY_USD_PER_CREDIT. Keyless/no usage block = 0.
++        credits = float(((payload.get("usage") or {}).get("credits")) or 0.0) if isinstance(payload, dict) else 0.0
++        try:
++            tavily_cost = credits * float(os.environ.get("TAVILY_USD_PER_CREDIT", "0") or 0.0)
++        except ValueError:
++            tavily_cost = 0.0
++        record_request(module="website_discovery", provider="Tavily", operation="POST search", success=True, status=response.status, duration_ms=elapsed_ms, organisation_number=profile.get("organisation_number"), bytes_received=len(raw), cost_usd=tavily_cost)
+         return parse_tavily_web_results(payload, query=query), {
+             "status": response.status,
+             "latency_ms": elapsed_ms,
+@@ -146,7 +152,8 @@ def main() -> None:
+         eligible_count += 1
+         queried += 1
+         companies_attempted.append(org)
+-        results, operation = tavily_search(row, api_key=api_key, timeout=args.timeout, max_results=args.max_results)
++        with company_context(org), company_span(org, "discovery"):
++            results, operation = tavily_search(row, api_key=api_key, timeout=args.timeout, max_results=args.max_results)
+         provider_latencies.append(operation["latency_ms"])
+         counts["provider_requests"] += 1
+         counts["provider_bytes"] += operation["bytes"]
+@@ -181,7 +188,8 @@ def main() -> None:
+             time.sleep(args.min_interval)
+             continue
+ 
+-        website, web_ops = fetch_website(selected["url"], timeout=args.timeout, organisation_number=row.get("organisation_number"))
++        with company_context(org), company_span(org, "discovery"):
++            website, web_ops = fetch_website(selected["url"], timeout=args.timeout, organisation_number=row.get("organisation_number"))
+         gated = apply_website_identity_gate(row, website)
+         website = gated["website"]
+         assessment = gated["assessment"]
+diff --git a/archive/v2-crawler/scrapy_crawler.py b/archive/v2-crawler/scrapy_crawler.py
+index 15b1bf9..569fa47 100644
+--- a/archive/v2-crawler/scrapy_crawler.py
++++ b/archive/v2-crawler/scrapy_crawler.py
+@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup
+ from scrapy.exceptions import IgnoreRequest
+ 
+ from norway_company_agent.crawl_events import emit_crawl_event, error_page_event, extract_page_event
++from norway_company_agent.telemetry import record_request
+ from norway_company_agent.website import USER_AGENT, _priority_links, assert_public_url, normalize_homepage
+ 
+ 
+@@ -38,13 +39,39 @@ class OperationalTelemetryMiddleware:
+         crawler.signalpost_request_domains = Counter()
+         crawler.signalpost_response_statuses = Counter()
+         crawler.signalpost_error_buckets = Counter()
++        # Phase 4: Twisted does not carry contextvars across Deferreds, so the company is taken
++        # from request.meta. Scrapy's own robots.txt requests have no meta, so the host is mapped
++        # to the company that first requested it.
++        self._org_by_host: dict[str, str] = {}
+ 
+     @classmethod
+     def from_crawler(cls, crawler):
+         return cls(crawler)
+ 
++    def _organisation_for(self, request):
++        host = (urllib.parse.urlparse(request.url).hostname or "").casefold()
++        org = request.meta.get("organisation_number")
++        if org:
++            self._org_by_host.setdefault(host, str(org))
++            return str(org)
++        return self._org_by_host.get(host)
++
++    def _log(self, request, *, success, status, bytes_received=None, error=None):
++        started = request.meta.get("_signalpost_started_at")
++        duration = int((time.monotonic() - started) * 1000) if started is not None else None
++        retry_times = int(request.meta.get("retry_times") or 0)
++        record_request(
++            module="crawler", provider="website/scrapy",
++            operation="GET robots.txt" if request.url.endswith("/robots.txt") else "GET crawl_page",
++            success=success, status=status, duration_ms=duration,
++            organisation_number=self._organisation_for(request),
++            error=error, attempt=retry_times + 1, retry=retry_times > 0,
++            bytes_received=bytes_received, caller_module="scrapy_crawler",
++        )
++
+     def process_request(self, request, spider):
+         request.meta["_signalpost_started_at"] = time.monotonic()
++        self._organisation_for(request)
+ 
+     def _record(self, request):
+         started = request.meta.get("_signalpost_started_at")
+@@ -59,6 +86,7 @@ class OperationalTelemetryMiddleware:
+         if download_latency is not None:
+             self.crawler.signalpost_response_download_latency_ms.append(float(download_latency) * 1000)
+         self.crawler.signalpost_response_statuses[str(response.status)] += 1
++        self._log(request, success=200 <= response.status < 400, status=response.status, bytes_received=len(response.body or b""), error=None if response.status < 400 else f"HTTP {response.status}")
+         return response
+ 
+     def process_exception(self, request, exception, spider):
+@@ -67,6 +95,7 @@ class OperationalTelemetryMiddleware:
+         if started is not None:
+             self.crawler.signalpost_failure_attempt_latency_ms.append((time.monotonic() - started) * 1000)
+         self.crawler.signalpost_error_buckets[type(exception).__name__] += 1
++        self._log(request, success=False, status=0, error=type(exception).__name__)
+ 
+ 
+ class SignalpostWebsiteSpider(scrapy.Spider):
+diff --git a/run.py b/run.py
+index 4e76460..0363670 100644
+--- a/run.py
++++ b/run.py
+@@ -82,6 +82,9 @@ def atomic_write_text(path: Path, value: str) -> None:
+ 
+ def publish_validation_report() -> None:
+     """Copy validation-report.json next to the final envelopes and print the verdict."""
++    operations_source = WORK_DIR / "operations-report.json"
++    if operations_source.exists():
++        atomic_copy_file(operations_source, VALIDATION_FILE.parent / "operations-report.json")
+     source = WORK_DIR / "validation-report.json"
+     if not source.exists():
+         print("WARNING | validation-report.json was not produced; envelopes are unvalidated.", file=sys.stderr)
+diff --git a/scripts/build_output_contract.py b/scripts/build_output_contract.py
+index 6c65aa8..7ab03e7 100644
+--- a/scripts/build_output_contract.py
++++ b/scripts/build_output_contract.py
+@@ -3,6 +3,7 @@ from __future__ import annotations
+ 
+ import argparse
+ import copy
++import hashlib
+ import json
+ import os
+ import sys
+@@ -15,6 +16,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
+ 
+ from norway_company_agent.batch import terminal_envelope  # noqa: E402
+ from norway_company_agent.output_contract import conversion_failure_envelope, to_public_envelope  # noqa: E402
++from norway_company_agent.telemetry import build_operations_by_org, empty_operations  # noqa: E402
+ from norway_company_agent.vocabulary import SCHEMA_VERSION  # noqa: E402
+ 
+ ENVELOPE_FORMATS = ("public", "fat")
+@@ -101,6 +103,7 @@ def build_envelope(
+     completed_at: str,
+     observations: list[dict],
+     envelope_format: str = "public",
++    operations: dict | None = None,
+ ) -> dict:
+     if envelope_format not in ENVELOPE_FORMATS:
+         raise ValueError(f"envelope_format must be one of {ENVELOPE_FORMATS}, got {envelope_format!r}")
+@@ -109,7 +112,22 @@ def build_envelope(
+     )
+     if envelope_format == "fat":
+         return attach_claims(fat)
+-    return to_public_envelope(fat)
++    return to_public_envelope(fat, operations=operations)
++
++
++def to_public_envelope_operations(value: dict) -> dict:
++    from norway_company_agent.output_contract import _normalize_operations
++    return _normalize_operations(value)
++
++
++def sha256_of(path: Path) -> str | None:
++    if not path.exists():
++        return None
++    digest = hashlib.sha256()
++    with path.open("rb") as handle:
++        for block in iter(lambda: handle.read(1 << 20), b""):
++            digest.update(block)
++    return digest.hexdigest()
+ 
+ 
+ def is_public_envelope(row: dict) -> bool:
+@@ -126,6 +144,9 @@ def main() -> int:
+     p.add_argument("--started-at", default="")
+     p.add_argument("--completed-at", default="")
+     p.add_argument("--observations", action="append", default=[])
++    p.add_argument("--request-log", default=os.environ.get("SIGNALPOST_REQUEST_LOG", ""), help="request-log.jsonl for per-envelope operations (default: $SIGNALPOST_REQUEST_LOG)")
++    p.add_argument("--spans-log", default=os.environ.get("SIGNALPOST_SPANS_LOG", ""), help="company-spans.jsonl for per-company runtime")
++    p.add_argument("--operations-report", default="", help="Where to write operations-report.json (default: next to --output)")
+     p.add_argument(
+         "--envelope-format", choices=ENVELOPE_FORMATS, default="public",
+         help="public: claims-based output (default). fat: legacy envelope with the full profile.",
+@@ -149,6 +170,23 @@ def main() -> int:
+             "cannot be rebuilt. Feed profiles.jsonl or fat envelopes instead."
+         )
+     observations = observations_by_organisation(args.observations)
++    # Phase 4: load the per-company operations ONCE, before the profile loop.
++    request_log = Path(args.request_log) if args.request_log else None
++    log_available = bool(request_log and request_log.exists())
++    if log_available:
++        operations_by_org, operations_summary = build_operations_by_org(request_log, Path(args.spans_log) if args.spans_log else None)
++    else:
++        operations_by_org, operations_summary = {}, {
++            "lines_total": 0, "lines_attributed": 0, "lines_unattributed": 0, "malformed": 0, "other_lines": 0,
++            "unattributed": {"requests": 0, "bytes": 0, "third_party_cost_usd": 0.0, "by_connector": {}},
++        }
++
++    def operations_for(organisation_number: str) -> dict:
++        if not log_available:
++            return empty_operations("unavailable")
++        # Zero requests for a company is a real result, not a missing one.
++        return operations_by_org.get(organisation_number) or empty_operations("request-log")
++
+     envelopes: list[dict] = []
+     claims_failed_orgs: list[str] = []
+     for row in rows:
+@@ -163,6 +201,7 @@ def main() -> int:
+                 completed_at=args.completed_at,
+                 observations=observations.get(organisation_number, []),
+                 envelope_format=args.envelope_format,
++                operations=operations_for(organisation_number),
+             )
+         except Exception as exc:
+             # Stage 6 is batch-critical, but a malformed company must not prevent
+@@ -188,6 +227,9 @@ def main() -> int:
+                     "errors": envelope["errors"],
+                 }
+             claims_failed_orgs.append(organisation_number)
++        if args.envelope_format == "public":
++            # conversion_failure_envelope has no knowledge of the log; the company still did real work.
++            envelope["operations"] = to_public_envelope_operations(operations_for(organisation_number))
+         envelopes.append(envelope)
+ 
+     atomic_write_jsonl(output_path, envelopes)
+@@ -221,6 +263,50 @@ def main() -> int:
+             indent=2,
+         ) + "\n",
+     )
++
++    # Phase 4: operations-report.json. run_metrics_* and `reconciled` are completed by run_agent
++    # after run-metrics.json exists (stage 6 runs before it), or by scripts/validate_operations.py.
++    if args.envelope_format == "public":
++        totals: dict[str, dict] = {}
++        cost_sum = 0.0
++        requests_sum = 0
++        for item in envelopes:
++            ops = item.get("operations") or {}
++            requests_sum += int(ops.get("requests") or 0)
++            cost_sum += float(ops.get("third_party_cost_usd") or 0.0)
++            for name, part in (ops.get("by_connector") or {}).items():
++                slot = totals.setdefault(name, {"requests": 0, "bytes": 0, "cost_usd": 0.0})
++                slot["requests"] += int(part.get("requests") or 0)
++                slot["bytes"] += int(part.get("bytes") or 0)
++                slot["cost_usd"] += float(part.get("cost_usd") or 0.0)
++        operations_report_path = Path(args.operations_report) if args.operations_report else output_path.parent / "operations-report.json"
++        atomic_write_text(
++            operations_report_path,
++            json.dumps(
++                {
++                    "run_id": report_run_id,
++                    "schema_version": SCHEMA_VERSION,
++                    "source": "request-log" if log_available else "unavailable",
++                    "log_lines_total": operations_summary["lines_total"],
++                    "log_lines_attributed": operations_summary["lines_attributed"],
++                    "log_lines_unattributed": operations_summary["lines_unattributed"],
++                    "malformed_lines": operations_summary["malformed"],
++                    "unattributed": operations_summary["unattributed"],
++                    "orgs_without_envelope": sorted(set(operations_by_org) - {str(item.get("organisation_number")) for item in envelopes}),
++                    "envelope_requests_sum": requests_sum,
++                    "run_metrics_requests": None,
++                    "cost_envelope_sum_usd": cost_sum,
++                    "cost_run_metrics_usd": None,
++                    "by_connector_envelope": {k: totals[k] for k in sorted(totals)},
++                    "by_connector_run_metrics": None,
++                    "uncovered_stages": [],
++                    "reconciled": None,
++                    "request_log_sha256": sha256_of(request_log) if request_log else None,
++                    "envelopes_sha256": sha256_of(output_path),
++                },
++                ensure_ascii=False, indent=2, sort_keys=True,
++            ) + "\n",
++        )
+     return 0
+ 
+ 
+diff --git a/scripts/run_agent.py b/scripts/run_agent.py
+index bce70c8..05eefb2 100644
+--- a/scripts/run_agent.py
++++ b/scripts/run_agent.py
+@@ -45,7 +45,7 @@ PROJECT_ROOT = ROOT.parent
+ ARCHIVE_ROOT = PROJECT_ROOT / "archive" / "v2-crawler"
+ sys.path.insert(0, str(PROJECT_ROOT / "src"))
+ from norway_company_agent.env import load_local_env  # noqa: E402
+-from norway_company_agent.telemetry import aggregate_company_metrics, apply_discovery_report, build_metrics, read_events  # noqa: E402
++from norway_company_agent.telemetry import aggregate_company_metrics, apply_discovery_report, build_metrics, read_events, reconcile_operations_report  # noqa: E402
+ from norway_company_agent.vocabulary import SCHEMA_VERSION  # noqa: E402
+ 
+ 
+@@ -222,6 +222,7 @@ def main() -> None:
+     workforce_cache_dir = PROJECT_ROOT / "cache" / "workforce-cache"
+     crawl_jobdir_root = PROJECT_ROOT / "cache" / args.run_id / "crawl-jobdir"
+     os.environ["SIGNALPOST_REQUEST_LOG"] = str(request_log)
++    os.environ["SIGNALPOST_SPANS_LOG"] = str(output_dir / "company-spans.jsonl")
+     os.environ["SIGNALPOST_SNAPSHOT_DIR"] = str((output_dir / "snapshots").resolve())
+     os.environ["SIGNALPOST_OUTPUT_DIR"] = str(output_dir.resolve())
+     os.environ["SIGNALPOST_CRAWL_TRACE_PATH"] = str((output_dir / "crawl-trace.jsonl").resolve())
+@@ -431,6 +432,9 @@ def main() -> None:
+         "--run-id", args.run_id,
+         "--started-at", started_at,
+         "--completed-at", completed_at,
++        "--request-log", str(request_log),
++        "--spans-log", str(output_dir / "company-spans.jsonl"),
++        "--operations-report", str(output_dir / "operations-report.json"),
+     ]
+     for obs_path in (activity_obs_path, news_obs_path, careers_obs_path, workforce_obs_path, prior_year_obs_path):
+         if obs_path.exists():
+@@ -483,6 +487,14 @@ def main() -> None:
+     metrics["stages"] = [{**stage, "requests": sum(1 for event in events if event.get("timestamp", "") >= stage["started_at"] and event.get("timestamp", "") <= stage["completed_at"]), "errors": sum(1 for event in events if not event.get("success") and event.get("timestamp", "") >= stage["started_at"] and event.get("timestamp", "") <= stage["completed_at"])} for stage in stage_metrics]
+     metrics["schema_version"] = SCHEMA_VERSION
+     atomic_write_json(output_dir / "run-metrics.json", metrics)
++    # Phase 4: stage 6 wrote operations-report.json before run-metrics existed; complete it now.
++    operations_report_path = output_dir / "operations-report.json"
++    if operations_report_path.exists():
++        try:
++            operations_report = json.loads(operations_report_path.read_text(encoding="utf-8"))
++            atomic_write_json(operations_report_path, reconcile_operations_report(operations_report, metrics))
++        except (OSError, json.JSONDecodeError) as exc:
++            print(f"WARNING | operations-report.json could not be reconciled: {exc}", file=sys.stderr)
+     print(json.dumps(summary, indent=2))
+ 
+ 
+diff --git a/scripts/run_competition_batch.py b/scripts/run_competition_batch.py
+index ebd5aa2..d2020d0 100644
+--- a/scripts/run_competition_batch.py
++++ b/scripts/run_competition_batch.py
+@@ -30,6 +30,7 @@ from norway_company_agent.official import (  # noqa: E402
+     fetch_official_modules,
+ )
+ from norway_company_agent.website import fetch_website  # noqa: E402
++from norway_company_agent import telemetry  # noqa: E402
+ 
+ 
+ class ProgressTracker:
+@@ -323,6 +324,20 @@ def collect_profile(
+     modules: set[str],
+     progress: ProgressTracker | None = None,
+     timings: CompanyTimingTracker | None = None,
++) -> dict:
++    """Phase 4: runs on a pool thread, so the company context is entered here, inside the
++    worker, and reset on exit (pool threads are reused). The inner body, including its
++    except-fallback path, runs entirely inside the context and the registry span."""
++    organisation_number = str(profile["organisation_number"])
++    with telemetry.company_context(organisation_number), telemetry.company_span(organisation_number, "registry"):
++        return _collect_profile_inner(profile, modules, progress, timings)
++
++
++def _collect_profile_inner(
++    profile: dict,
++    modules: set[str],
++    progress: ProgressTracker | None = None,
++    timings: CompanyTimingTracker | None = None,
+ ) -> dict:
+     organisation_number = str(profile["organisation_number"])
+     if progress:
+diff --git a/scripts/validate_envelopes.py b/scripts/validate_envelopes.py
+index ab489cd..b7dd1e1 100644
+--- a/scripts/validate_envelopes.py
++++ b/scripts/validate_envelopes.py
+@@ -28,6 +28,8 @@ from norway_company_agent.output_contract import (  # noqa: E402
+     ALLOWED_AVAILABILITY,
+     CANONICAL_CLAIM_FIELDS,
+     CLAIM_FIELD_ORDER,
++    OPERATIONS_KEYS,
++    OPERATIONS_SOURCES,
+     PUBLIC_EVIDENCE_KEYS,
+     PUBLIC_RUN_KEYS,
+     PUBLIC_TOP_LEVEL_KEYS,
+@@ -98,6 +100,19 @@ def check_row_keysets(rows: list[dict[str, Any]]) -> list[str]:
+         modules = row.get("modules")
+         if not isinstance(modules, dict) or tuple(modules) != MODULE_KEYS:
+             out.append(f"{_org(row)}: modules keys differ from the fixed {len(MODULE_KEYS)}-key list")
++        operations = row.get("operations")
++        if not isinstance(operations, dict) or tuple(operations) != OPERATIONS_KEYS:
++            out.append(f"{_org(row)}: operations keys differ from {list(OPERATIONS_KEYS)}")
++        else:
++            int_keys = ("requests", "bytes", "runtime_ms", "request_time_ms")
++            if any(not isinstance(operations[key], int) or isinstance(operations[key], bool) for key in int_keys):
++                out.append(f"{_org(row)}: operations requests/bytes/runtime_ms/request_time_ms must be integers")
++            if not isinstance(operations["third_party_cost_usd"], (int, float)) or isinstance(operations["third_party_cost_usd"], bool):
++                out.append(f"{_org(row)}: operations.third_party_cost_usd must be a number")
++            if not isinstance(operations["by_connector"], dict):
++                out.append(f"{_org(row)}: operations.by_connector must be an object")
++            if operations["source"] not in OPERATIONS_SOURCES:
++                out.append(f"{_org(row)}: operations.source {operations['source']!r} not in {list(OPERATIONS_SOURCES)}")
+         for item in _evidence_items(row):
+             if tuple(item) != PUBLIC_EVIDENCE_KEYS:
+                 out.append(f"{_org(row)}: evidence {item.get('id')} keys {list(item)} differ from {list(PUBLIC_EVIDENCE_KEYS)}")
+diff --git a/scripts/validate_operations.py b/scripts/validate_operations.py
+new file mode 100644
+index 0000000..4f9add3
+--- /dev/null
++++ b/scripts/validate_operations.py
+@@ -0,0 +1,156 @@
++#!/usr/bin/env python3
++"""Phase 4 acceptance checks for per-envelope operations and the rate limiter.
++
++    python scripts/validate_operations.py --run-dir out/latest-run --envelopes result/envelopes.jsonl
++
++Exit code 1 if any check fails. Pure Python, Windows-safe, no network.
++
++Checks 6 (no context leak) and 10 (429 behaviour) cannot be proven from a run's files: the request
++log records no URL, and 429 handling needs a fake server. They are covered by
++tests/test_phase4_operations.py and tests/test_phase4_rate_limit.py and reported as "covered_by_tests".
++"""
++from __future__ import annotations
++
++import argparse
++import json
++import math
++import os
++import sys
++from datetime import datetime
++from pathlib import Path
++
++PROJECT_ROOT = Path(__file__).resolve().parent.parent
++sys.path.insert(0, str(PROJECT_ROOT / "src"))
++
++from norway_company_agent.output_contract import OPERATIONS_KEYS, OPERATIONS_SOURCES  # noqa: E402
++from norway_company_agent.telemetry import build_operations_by_org, summarize_requests  # noqa: E402
++
++
++def read_jsonl(path: Path) -> list[dict]:
++    rows = []
++    for line in path.read_text(encoding="utf-8").splitlines():
++        if line.strip():
++            rows.append(json.loads(line))
++    return rows
++
++
++def read_log_events(path: Path) -> list[dict]:
++    events = []
++    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
++        if not line.strip():
++            continue
++        try:
++            event = json.loads(line)
++        except ValueError:
++            continue
++        if isinstance(event, dict) and event.get("event_type") == "request":
++            events.append(event)
++    return events
++
++
++def _ts(value: str) -> float:
++    return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
++
++
++def run_checks(run_dir: Path, envelopes_path: Path, interval: float, allowed_unattributed: int) -> dict:
++    results: dict[str, dict] = {}
++
++    def record(name: str, passed: bool | None, detail: str) -> None:
++        results[name] = {"passed": passed, "detail": detail}
++
++    envelopes = read_jsonl(envelopes_path)
++    log_path = run_dir / "request-log.jsonl"
++    metrics_path = run_dir / "run-metrics.json"
++    if not log_path.exists():
++        record("request_log_present", False, f"{log_path} is missing")
++        return results
++    per_org, summary = build_operations_by_org(log_path, run_dir / "company-spans.jsonl")
++    events = read_log_events(log_path)
++    ops = [item.get("operations") or {} for item in envelopes]
++    env_requests = sum(int(o.get("requests") or 0) for o in ops)
++
++    record("1_request_totals", env_requests + summary["lines_unattributed"] == summary["lines_total"],
++           f"envelopes {env_requests} + unattributed {summary['lines_unattributed']} vs log {summary['lines_total']}")
++    record("2_zero_unattributed", summary["lines_unattributed"] <= allowed_unattributed,
++           f"{summary['lines_unattributed']} unattributed (allowed {allowed_unattributed}), malformed {summary['malformed']}")
++
++    metrics = json.loads(metrics_path.read_text(encoding="utf-8")) if metrics_path.exists() else None
++    if metrics is None:
++        for name in ("3_run_level_match", "4_cost_match", "5_connector_match"):
++            record(name, False, "run-metrics.json missing")
++    else:
++        req = metrics.get("requests") or {}
++        record("3_run_level_match", env_requests == int(req.get("total_api_calls") or 0), f"envelopes {env_requests} vs run-metrics {req.get('total_api_calls')}")
++        env_cost = math.fsum(float(o.get("third_party_cost_usd") or 0.0) for o in ops)
++        run_cost = float(req.get("third_party_cost_usd") or 0.0)
++        brreg_cost = sum(float(o.get("by_connector", {}).get("official_brreg", {}).get("cost_usd", 0.0)) for o in ops)
++        record("4_cost_match", abs(env_cost - run_cost) <= 1e-9 and brreg_cost == 0.0, f"envelopes {env_cost} vs run-metrics {run_cost}, brreg cost {brreg_cost}")
++        totals: dict[str, int] = {}
++        for o in ops:
++            for name, part in (o.get("by_connector") or {}).items():
++                totals[name] = totals.get(name, 0) + int(part.get("requests") or 0)
++        run_totals = {name: int(part.get("requests") or 0) for name, part in (req.get("by_connector") or {}).items()}
++        record("5_connector_match", totals == run_totals, f"envelopes {totals} vs run-metrics {run_totals}")
++
++    record("6_no_context_leak", None, "covered_by_tests (request log has no URL field)")
++
++    again, _ = build_operations_by_org(log_path, run_dir / "company-spans.jsonl")
++    mismatched = [
++        item.get("organisation_number") for item in envelopes
++        if json.dumps(item.get("operations"), sort_keys=True) != json.dumps(again.get(str(item.get("organisation_number"))) or item.get("operations"), sort_keys=True)
++    ]
++    record("7_determinism", not mismatched, f"{len(mismatched)} envelope(s) differ from a fresh aggregation")
++
++    bad_shape = []
++    for item in envelopes:
++        o = item.get("operations")
++        if not isinstance(o, dict) or tuple(o) != OPERATIONS_KEYS:
++            bad_shape.append(item.get("organisation_number")); continue
++        ints_ok = all(isinstance(o[k], int) and not isinstance(o[k], bool) for k in ("requests", "bytes", "runtime_ms", "request_time_ms"))
++        if not (ints_ok and isinstance(o["third_party_cost_usd"], (int, float)) and isinstance(o["by_connector"], dict) and o["source"] in OPERATIONS_SOURCES):
++            bad_shape.append(item.get("organisation_number"))
++    record("8_uniform_shape", not bad_shape, f"{len(bad_shape)} envelope(s) with wrong shape")
++
++    if interval > 0:
++        starts = sorted(_ts(e["timestamp"]) - (e.get("duration_ms") or 0) / 1000.0 for e in events if e.get("module") == "financial_history")
++        gaps = [b - a for a, b in zip(starts, starts[1:])]
++        worst = min(gaps) if gaps else None
++        record("9_limiter_spacing", worst is None or worst >= interval - 0.05, f"min gap between request starts {worst} (interval {interval})")
++    else:
++        record("9_limiter_spacing", None, "skipped: no interval configured")
++
++    record("10_429_behaviour", None, "covered_by_tests (fake server)")
++
++    last_index: dict[tuple, int] = {}
++    for index, e in enumerate(events):
++        last_index[(e.get("organisation_number"), e.get("module"))] = index
++    residual = [e.get("organisation_number") for index, e in enumerate(events) if e.get("http_status") == 429 and last_index[(e.get("organisation_number"), e.get("module"))] == index]
++    total_429 = sum(1 for e in events if e.get("http_status") == 429)
++    record("11_no_429_residue", not residual, f"{total_429} 429 line(s), {len(residual)} still failing after the final retry")
++    return results
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser(description="Phase 4 operations acceptance checks")
++    parser.add_argument("--run-dir", required=True)
++    parser.add_argument("--envelopes", required=True)
++    parser.add_argument("--interval", type=float, default=None, help="Configured brreg_history interval; default read from SIGNALPOST_RATE_LIMITS")
++    parser.add_argument("--allowed-unattributed", type=int, default=0)
++    args = parser.parse_args()
++    interval = args.interval
++    if interval is None:
++        try:
++            interval = float(json.loads(os.environ.get("SIGNALPOST_RATE_LIMITS") or "{}").get("brreg_history", 0.0))
++        except (ValueError, AttributeError, TypeError):
++            interval = 0.0
++    results = run_checks(Path(args.run_dir), Path(args.envelopes), interval, args.allowed_unattributed)
++    failed = [name for name, item in results.items() if item["passed"] is False]
++    for name, item in results.items():
++        mark = "PASS" if item["passed"] else "SKIP" if item["passed"] is None else "FAIL"
++        print(f"{mark:4} {name}: {item['detail']}")
++    print("RESULT:", "FAILED (" + ", ".join(failed) + ")" if failed else "PASSED")
++    return 1 if failed else 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/src/norway_company_agent/http.py b/src/norway_company_agent/http.py
+index 38b965d..f6e9aef 100644
+--- a/src/norway_company_agent/http.py
++++ b/src/norway_company_agent/http.py
+@@ -11,6 +11,7 @@ from dataclasses import dataclass
+ from datetime import datetime, timezone
+ from typing import Any
+ 
++from .rate_limit import limiter_for, parse_retry_after
+ from .telemetry import classify_request, record_request
+ 
+ 
+@@ -56,6 +57,10 @@ def fetch_json(
+ ) -> FetchResult:
+     last_error = "request failed"
+     for attempt in range(attempts):
++        limiter = limiter_for(url)
++        if limiter is not None:
++            limiter.acquire()
++            limiter.wait_for_penalty()
+         started = time.monotonic()
+         request = urllib.request.Request(
+             url,
+@@ -80,10 +85,10 @@ def fetch_json(
+                     body = json.loads(raw)
+                 except json.JSONDecodeError:
+                     failure_class = classify_request(success=False, status=response.status, error="JSONDecodeError")
+-                    record_request(module=module, provider="BRREG" if "brreg.no" in url else "http", operation="GET", success=False, status=response.status, duration_ms=elapsed, organisation_number=organisation_number, error="JSONDecodeError", attempt=attempt + 1, retry=attempt > 0, retry_reason="JSONDecodeError" if attempt > 0 else None)
++                    record_request(module=module, provider="BRREG" if "brreg.no" in url else "http", operation="GET", success=False, status=response.status, duration_ms=elapsed, organisation_number=organisation_number, error="JSONDecodeError", bytes_received=len(raw), attempt=attempt + 1, retry=attempt > 0, retry_reason="JSONDecodeError" if attempt > 0 else None)
+                     return FetchResult(url, response.status, elapsed, len(raw), error="JSONDecodeError", content_sha256=hashlib.sha256(raw).hexdigest(), retrieved_at=_utc_now(), failure_class=failure_class)
+                 result = FetchResult(url, response.status, elapsed, len(raw), body, content_sha256=hashlib.sha256(raw).hexdigest(), retrieved_at=_utc_now(), failure_class="success")
+-                record_request(module=module, provider="BRREG" if "brreg.no" in url else "http", operation="GET", success=True, status=response.status, duration_ms=elapsed, organisation_number=organisation_number, attempt=attempt + 1, retry=attempt > 0, retry_reason=last_error if attempt > 0 else None)
++                record_request(module=module, provider="BRREG" if "brreg.no" in url else "http", operation="GET", success=True, status=response.status, duration_ms=elapsed, organisation_number=organisation_number, bytes_received=len(raw), attempt=attempt + 1, retry=attempt > 0, retry_reason=last_error if attempt > 0 else None)
+                 return result
+         except urllib.error.HTTPError as exc:
+             elapsed = int((time.monotonic() - started) * 1000)
+@@ -91,10 +96,25 @@ def fetch_json(
+                 raw = exc.read()
+             except Exception:
+                 raw = b""
+-            record_request(module=module, provider="BRREG" if "brreg.no" in url else "http", operation="GET", success=False, status=exc.code, duration_ms=elapsed, organisation_number=organisation_number, error=f"HTTP {exc.code}", attempt=attempt + 1, retry=attempt > 0, retry_reason=f"HTTP {exc.code}" if attempt > 0 else None)
++            record_request(module=module, provider="BRREG" if "brreg.no" in url else "http", operation="GET", success=False, status=exc.code, duration_ms=elapsed, organisation_number=organisation_number, error=f"HTTP {exc.code}", bytes_received=len(raw), attempt=attempt + 1, retry=attempt > 0, retry_reason=f"HTTP {exc.code}" if attempt > 0 else None)
+             if exc.code in {404, 410}:
+                 return FetchResult(url, exc.code, elapsed, len(raw), error=f"HTTP {exc.code}", content_sha256=hashlib.sha256(raw).hexdigest() if raw else None, retrieved_at=_utc_now(), failure_class=classify_request(success=False, status=exc.code, error=f"HTTP {exc.code}"))
+             last_error = f"HTTP {exc.code}"
++            if exc.code == 429:
++                # Always on, independent of any configured interval. The note makes a throttle
++                # distinguishable from a real outage once the attempts are exhausted.
++                last_error = "HTTP 429 rate_limited"
++                header = exc.headers.get("Retry-After") if getattr(exc, "headers", None) is not None else None
++                delay = parse_retry_after(header)
++                if delay is None:
++                    delay = 0.4 * (2**attempt)
++                if limiter is not None:
++                    limiter.penalize(delay)
++                if organisation_number and attempt + 1 < attempts:
++                    print(f"[{datetime.now().strftime('%H:%M:%S')}] RETRY company {organisation_number} | module={module} | attempt={attempt + 1}/{attempts} | HTTP 429, waiting {delay:.1f}s", flush=True)
++                if attempt + 1 < attempts:
++                    time.sleep(delay)
++                continue
+             if organisation_number and attempt + 1 < attempts:
+                 print(f"[{datetime.now().strftime('%H:%M:%S')}] RETRY company {organisation_number} | module={module} | attempt={attempt + 1}/{attempts} | HTTP {exc.code}", flush=True)
+         except _NETWORK_ERRORS as exc:
+diff --git a/src/norway_company_agent/output_contract.py b/src/norway_company_agent/output_contract.py
+index 5572163..77860f9 100644
+--- a/src/norway_company_agent/output_contract.py
++++ b/src/norway_company_agent/output_contract.py
+@@ -196,7 +196,7 @@ PUBLIC_RUN_KEYS = ("run_id", "started_at", "completed_at", "terminal_status")
+ PUBLIC_EVIDENCE_KEYS = ("id", "source_url", "source_class", "retrieved_at", "content_sha256", "claim_span")
+ 
+ 
+-def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = None, previous_envelope: dict[str, Any] | None = None) -> dict[str, Any]:
++def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = None, previous_envelope: dict[str, Any] | None = None, operations: dict[str, Any] | None = None) -> dict[str, Any]:
+     profile = row.get("profile") if isinstance(row.get("profile"), dict) else row
+     organisation_number = str(profile.get("organisation_number") or row.get("organisation_number") or "")
+     records = profile.get("evidence") if isinstance(profile.get("evidence"), dict) else {}
+@@ -321,7 +321,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+ 
+     claims = _complete_claims(claims)
+     modules = module_states(profile)
+-    ops = _operations(metrics, profile)
++    ops = _normalize_operations(operations) if operations is not None else _operations(metrics, profile)
+ 
+     # Compute changes[] by comparing current normalized claims against the
+     # previous envelope's normalized claims.  When no previous envelope is
+@@ -567,24 +567,49 @@ def _nested_get(value: dict[str, Any], path: str | tuple[str, ...]) -> Any:
+     return current
+ 
+ 
++OPERATIONS_KEYS = ("requests", "bytes", "runtime_ms", "request_time_ms", "third_party_cost_usd", "by_connector", "source")
++OPERATIONS_SOURCES = ("request-log", "unavailable")
++
++
++def _normalize_operations(value: dict[str, Any]) -> dict[str, Any]:
++    """Force the uniform operations shape: every key present, correct types."""
++    by_connector = value.get("by_connector") if isinstance(value.get("by_connector"), dict) else {}
++    return {
++        "requests": int(value.get("requests") or 0),
++        "bytes": int(value.get("bytes") or 0),
++        "runtime_ms": int(value.get("runtime_ms") or 0),
++        "request_time_ms": int(value.get("request_time_ms") or 0),
++        "third_party_cost_usd": float(value.get("third_party_cost_usd") or 0.0),
++        "by_connector": by_connector,
++        "source": value.get("source") if value.get("source") in OPERATIONS_SOURCES else "unavailable",
++    }
++
++
+ def _operations(metrics: dict[str, Any] | None, profile: dict[str, Any]) -> dict[str, Any]:
+-    """requests / runtime_ms / third_party_cost_usd, always the same three keys.
++    """Fallback operations when stage 6 is given no request log (e.g. --source-envelopes).
++
++    Real per-envelope numbers come from telemetry.build_operations_by_org and are passed in via
++    to_public_envelope(operations=...). Definitions (see that function's docstring):
++    requests/bytes = request-log lines and response bytes for the org; runtime_ms = summed
++    company-spans wall clock (NOT a sum of request latencies); request_time_ms = summed request
++    latencies; third_party_cost_usd = summed per-line cost; by_connector = per-connector split.
+ 
+-    Telemetry supplies requests and runtime when given. Without telemetry they are
+-    0, which is honest: nothing is fabricated. Cost falls back to the cost_usd
+-    recorded on discovery evidence.
++    Here nothing is measured, so everything is 0 and source is "unavailable". Nothing is fabricated.
++    Legacy `metrics` (a telemetry per-company dict) is still honoured when supplied.
+     """
+     cost = _third_party_cost(profile)
+     if not metrics:
+-        return {"requests": 0, "runtime_ms": 0, "third_party_cost_usd": cost}
++        return _normalize_operations({"third_party_cost_usd": cost, "source": "unavailable"})
+     runtime = int(metrics.get("wall_clock_duration_ms") or 0)
+     if runtime <= 0:
+         runtime = int(metrics.get("sum_request_duration_ms") or metrics.get("duration_ms") or 0)
+-    return {
++    return _normalize_operations({
+         "requests": int(metrics.get("api_request_count") or 0),
+         "runtime_ms": runtime,
++        "request_time_ms": int(metrics.get("sum_request_duration_ms") or 0),
+         "third_party_cost_usd": float(metrics.get("third_party_cost_usd") or 0) or cost,
+-    }
++        "source": "request-log",
++    })
+ 
+ 
+ def _third_party_cost(profile: dict[str, Any]) -> float:
+diff --git a/src/norway_company_agent/rate_limit.py b/src/norway_company_agent/rate_limit.py
+new file mode 100644
+index 0000000..fb1ae0f
+--- /dev/null
++++ b/src/norway_company_agent/rate_limit.py
+@@ -0,0 +1,159 @@
++"""Process-wide rate limiting for BRREG endpoints (Phase 4, P4.2).
++
++No internal imports. Each pipeline stage is its own process and stages run one after
++another, so one limiter instance is shared by the 12 stage-1 worker threads and that is
++sufficient. There is deliberately no cross-process locking.
++"""
++from __future__ import annotations
++
++import json
++import os
++import re
++import sys
++import threading
++import time
++from datetime import datetime, timezone
++from email.utils import parsedate_to_datetime
++from typing import Any, Callable
++from urllib.parse import urlparse
++
++RETRY_AFTER_CAP_S = 120.0
++
++
++class RateLimiter:
++    """Thread-safe token bucket with burst 1: reserve the next free slot under a lock,
++    sleep outside the lock so waiting threads do not serialize each other's wake-ups."""
++
++    def __init__(self, min_interval_s: float, clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep):
++        self._interval = float(min_interval_s)
++        self._clock = clock
++        self._sleep = sleep
++        self._lock = threading.Lock()
++        self._next = 0.0
++
++    @property
++    def min_interval_s(self) -> float:
++        return self._interval
++
++    def acquire(self) -> float:
++        if self._interval <= 0:
++            return 0.0
++        with self._lock:
++            now = self._clock()
++            slot = max(now, self._next)
++            self._next = slot + self._interval
++        wait = slot - now
++        if wait > 0:
++            self._sleep(wait)
++        return wait
++
++    def penalize(self, seconds: float) -> None:
++        """After a 429: push the next slot out so every thread backs off, not only the one throttled.
++        Works even when min_interval_s is 0, because a throttle must be honoured either way."""
++        with self._lock:
++            self._next = max(self._next, self._clock() + float(seconds))
++
++    def wait_for_penalty(self) -> float:
++        """Block until a penalty set by penalize() has expired. Used when no proactive interval is set."""
++        with self._lock:
++            now = self._clock()
++            wait = self._next - now
++        if wait > 0:
++            self._sleep(wait)
++            return wait
++        return 0.0
++
++
++# name, host, path_regex, min_interval_s.
++# Only an endpoint we can name by host AND path gets a rule. Company websites, Tavily and Exa
++# are different services with their own limits and are intentionally not limited here.
++#
++# brreg_history: the annual-account year list that official._fetch_history() documents as
++# "30 request starts per minute" (2.1 s). Baseline in the shipped sample run: 0 responses
++# with HTTP 429, so proactive spacing is OFF by default (0.0); 429 handling in http.fetch_json
++# is always on. Turn spacing on with SIGNALPOST_RATE_LIMITS='{"brreg_history": 2.1}'.
++DEFAULT_RULES: list[dict[str, Any]] = [
++    {
++        "name": "brreg_history",
++        "host": "data.brreg.no",
++        "path_regex": r"^/regnskapsregisteret/regnskap/aarsregnskap/kopi/\d{9}/aar/?$",
++        "min_interval_s": 0.0,
++    },
++]
++
++_LIMITERS: dict[tuple[str, float], RateLimiter] = {}
++_LIMITERS_LOCK = threading.Lock()
++_warned_invalid = False
++
++
++def _overrides() -> dict[str, float]:
++    global _warned_invalid
++    raw = os.environ.get("SIGNALPOST_RATE_LIMITS", "").strip()
++    if not raw:
++        return {}
++    try:
++        parsed = json.loads(raw)
++        if not isinstance(parsed, dict):
++            raise ValueError("not a JSON object")
++        return {str(key): float(value) for key, value in parsed.items()}
++    except (ValueError, TypeError):
++        if not _warned_invalid:
++            _warned_invalid = True
++            print("WARNING | SIGNALPOST_RATE_LIMITS is not a valid JSON object of {rule: seconds}; using defaults.", file=sys.stderr, flush=True)
++        return {}
++
++
++def limiter_for(url: str) -> RateLimiter | None:
++    """First matching rule wins. Returns the shared RateLimiter for that rule, or None."""
++    try:
++        parsed = urlparse(url)
++    except ValueError:
++        return None
++    host = (parsed.hostname or "").lower()
++    overrides = _overrides()
++    for rule in DEFAULT_RULES:
++        if host != rule["host"] or not re.search(rule["path_regex"], parsed.path or ""):
++            continue
++        interval = max(0.0, float(overrides.get(rule["name"], rule["min_interval_s"])))
++        key = (rule["name"], interval)
++        with _LIMITERS_LOCK:
++            limiter = _LIMITERS.get(key)
++            if limiter is None:
++                # A new interval for the same rule replaces the old instance, but a pending
++                # penalty must survive, so carry it over.
++                limiter = RateLimiter(interval)
++                for (name, _old), previous in list(_LIMITERS.items()):
++                    if name == rule["name"]:
++                        limiter._next = max(limiter._next, previous._next)
++                _LIMITERS[key] = limiter
++            return limiter
++    return None
++
++
++def reset_limiters() -> None:
++    """Test helper: forget all shared limiters and the one-shot warning."""
++    global _warned_invalid
++    with _LIMITERS_LOCK:
++        _LIMITERS.clear()
++    _warned_invalid = False
++
++
++def parse_retry_after(value: str | None, *, now: datetime | None = None) -> float | None:
++    """Retry-After as integer seconds or an HTTP-date. Capped at 120 s. None if absent/unparseable."""
++    if value is None:
++        return None
++    text = str(value).strip()
++    if not text:
++        return None
++    seconds: float | None = None
++    if re.fullmatch(r"\d+", text):
++        seconds = float(text)
++    else:
++        try:
++            moment = parsedate_to_datetime(text)
++        except (TypeError, ValueError):
++            return None
++        if moment.tzinfo is None:
++            moment = moment.replace(tzinfo=timezone.utc)
++        seconds = (moment - (now or datetime.now(timezone.utc))).total_seconds()
++    return min(RETRY_AFTER_CAP_S, max(0.0, seconds))
+diff --git a/src/norway_company_agent/telemetry.py b/src/norway_company_agent/telemetry.py
+index 2e4b87a..c48bcf4 100644
+--- a/src/norway_company_agent/telemetry.py
++++ b/src/norway_company_agent/telemetry.py
+@@ -1,16 +1,39 @@
+ from __future__ import annotations
+ 
++import contextvars
+ import json
++import math
+ import os
+ import threading
+ import time
+ from collections import Counter, defaultdict
++from contextlib import contextmanager
+ from datetime import datetime, timezone
+ from pathlib import Path
+ from typing import Any
+ 
+ _LOCK = threading.Lock()
+ 
++# Phase 4: attribution of requests and runtime to one company.
++# ContextVar, not a global: stage 1 runs companies on a thread pool, and
++# ThreadPoolExecutor.submit() does NOT copy the caller's context into workers.
++# The context must therefore be entered INSIDE the worker function, and reset in
++# `finally`, because pool threads are reused for the next company.
++_ORG: contextvars.ContextVar[str | None] = contextvars.ContextVar("signalpost_org", default=None)
++
++
++@contextmanager
++def company_context(organisation_number: Any):
++    token = _ORG.set(str(organisation_number) if organisation_number else None)
++    try:
++        yield
++    finally:
++        _ORG.reset(token)
++
++
++def current_organisation() -> str | None:
++    return _ORG.get()
++
+ 
+ def classify_request(*, success: bool, status: int | None = None, error: str | None = None) -> str:
+     if success:
+@@ -33,6 +56,42 @@ def request_log_path() -> Path | None:
+     return Path(value) if value else None
+ 
+ 
++def spans_log_path() -> Path | None:
++    value = os.environ.get("SIGNALPOST_SPANS_LOG", "").strip()
++    return Path(value) if value else None
++
++
++def _append_jsonl(path: Path, row: dict[str, Any]) -> None:
++    """Append one JSON line. In-process lock only: every stage is its own process and
++    stages run sequentially, so there is never a second writing process."""
++    path.parent.mkdir(parents=True, exist_ok=True)
++    line = json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n"
++    with _LOCK:
++        with path.open("a", encoding="utf-8") as handle:
++            handle.write(line)
++
++
++@contextmanager
++def company_span(organisation_number: Any, stage: str):
++    """Record wall-clock time of one stage of per-company work in company-spans.jsonl.
++
++    Without SIGNALPOST_SPANS_LOG this is a no-op, so unit tests and ad-hoc runs are unaffected.
++    """
++    started = time.monotonic()
++    started_at = utc_now()
++    try:
++        yield
++    finally:
++        path = spans_log_path()
++        if path is not None and organisation_number:
++            _append_jsonl(path, {
++                "organisation_number": str(organisation_number),
++                "stage": stage,
++                "started_at": started_at,
++                "elapsed_ms": int((time.monotonic() - started) * 1000),
++            })
++
++
+ def record_request(
+     *,
+     module: str,
+@@ -48,10 +107,14 @@ def record_request(
+     attempt: int = 1,
+     retry: bool = False,
+     retry_reason: str | None = None,
++    bytes_received: int | None = None,
++    cost_usd: float | None = None,
+ ) -> None:
+     path = request_log_path()
+     if path is None:
+         return
++    # Explicit argument wins, then the ambient company_context(), else null.
++    organisation_number = organisation_number or current_organisation()
+     event = {
+         "timestamp": utc_now(),
+         "run_id": os.environ.get("SIGNALPOST_RUN_ID"),
+@@ -73,11 +136,198 @@ def record_request(
+         event["error"] = error[:200]
+     if retry_reason:
+         event["retry_reason"] = retry_reason[:120]
++    if bytes_received is not None:
++        event["bytes"] = int(bytes_received)
++    if cost_usd is not None:
++        event["cost_usd"] = float(cost_usd)
+     event["failure_class"] = classify_request(success=success, status=status, error=error)
+-    path.parent.mkdir(parents=True, exist_ok=True)
+-    with _LOCK:
+-        with path.open("a", encoding="utf-8") as handle:
+-            handle.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n")
++    _append_jsonl(path, event)
++
++
++# ---------------------------------------------------------------------------
++# Phase 4: connector naming, cost and per-organisation aggregation.
++# These helpers are the ONLY place connector names and cost are derived, so the
++# run-level numbers (build_metrics) and the per-envelope numbers cannot drift.
++# ---------------------------------------------------------------------------
++
++_CONNECTOR_BY_PROVIDER = {
++    "brreg": "official_brreg",
++    "website/http": "company_site",
++    "website/scrapy": "company_site",
++    "tavily": "tavily",
++    "exa": "exa",
++}
++
++
++def connector_for(event: dict[str, Any]) -> str:
++    provider = str(event.get("provider") or "").strip().lower()
++    if not provider:
++        return "unknown"
++    return _CONNECTOR_BY_PROVIDER.get(provider, provider.replace(" ", "_"))
++
++
++def event_bytes(event: dict[str, Any]) -> int:
++    try:
++        return max(0, int(event.get("bytes") or 0))
++    except (TypeError, ValueError):
++        return 0
++
++
++def event_cost_usd(event: dict[str, Any]) -> float:
++    """Cost recorded on the log line by the connector that made the paid call.
++    Free connectors (BRREG, company sites) record nothing, which is 0.0."""
++    try:
++        value = float(event.get("cost_usd") or 0.0)
++    except (TypeError, ValueError):
++        return 0.0
++    return value if math.isfinite(value) and value > 0 else 0.0
++
++
++def _bucket() -> dict[str, Any]:
++    return {"requests": 0, "bytes": 0, "request_time_ms": 0, "costs": [], "by_connector": {}}
++
++
++def _accumulate(bucket: dict[str, Any], event: dict[str, Any]) -> None:
++    cost = event_cost_usd(event)
++    size = event_bytes(event)
++    bucket["requests"] += 1
++    bucket["bytes"] += size
++    bucket["request_time_ms"] += int(event.get("duration_ms") or 0)
++    bucket["costs"].append(cost)
++    per = bucket["by_connector"].setdefault(connector_for(event), {"requests": 0, "bytes": 0, "costs": []})
++    per["requests"] += 1
++    per["bytes"] += size
++    per["costs"].append(cost)
++
++
++def _connector_view(by_connector: dict[str, Any]) -> dict[str, dict[str, Any]]:
++    return {
++        name: {"requests": item["requests"], "bytes": item["bytes"], "cost_usd": math.fsum(item["costs"])}
++        for name, item in sorted(by_connector.items())
++    }
++
++
++def summarize_requests(events: list[dict[str, Any]]) -> dict[str, Any]:
++    """Run-level requests/bytes/cost/by_connector. Used by build_metrics."""
++    bucket = _bucket()
++    for event in events:
++        _accumulate(bucket, event)
++    return {
++        "requests": bucket["requests"],
++        "bytes": bucket["bytes"],
++        "third_party_cost_usd": math.fsum(bucket["costs"]),
++        "by_connector": _connector_view(bucket["by_connector"]),
++    }
++
++
++def empty_operations(source: str = "unavailable") -> dict[str, Any]:
++    return {
++        "requests": 0,
++        "bytes": 0,
++        "runtime_ms": 0,
++        "request_time_ms": 0,
++        "third_party_cost_usd": 0.0,
++        "by_connector": {},
++        "source": source,
++    }
++
++
++def build_operations_by_org(
++    request_log_path: Path | str,
++    spans_path: Path | str | None = None,
++) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
++    """Per-organisation `operations` objects from request-log.jsonl (+ company-spans.jsonl).
++
++    Returns ({organisation_number: operations}, summary). Pure: reads files, writes nothing,
++    no timestamps in the result, so two runs over the same files are byte-identical.
++
++    Field definitions (the validator relies on them):
++      requests              number of request-log lines (event_type == "request") for the org.
++                            One line is one HTTP attempt, so a retry counts as its own request.
++      bytes                 sum of the `bytes` field of those lines (lines that did not record
++                            a size count as 0).
++      runtime_ms            sum of elapsed_ms of that org's company-spans.jsonl rows. Wall-clock
++                            of per-company work, NOT a sum of request latencies.
++      request_time_ms       sum of duration_ms of the org's request lines. Exceeds runtime_ms
++                            only if requests overlap.
++      third_party_cost_usd  sum of the per-line cost_usd (event_cost_usd). BRREG is 0.
++      by_connector          {connector: {requests, bytes, cost_usd}} via connector_for().
++      source                "request-log".
++
++    Resume (Phase 2): the log is appended across attempts, so requests of a company that was
++    interrupted and re-run are counted too. That is real cost and is deliberately not de-duplicated.
++
++    summary: lines_total (request lines, attributed + unattributed), lines_attributed,
++    lines_unattributed, malformed, other_lines (valid JSON, not a request event),
++    unattributed {requests, bytes, third_party_cost_usd, by_connector}.
++    """
++    buckets: dict[str, dict[str, Any]] = {}
++    unattributed = _bucket()
++    malformed = 0
++    other = 0
++    path = Path(request_log_path)
++    if path.exists():
++        with path.open("r", encoding="utf-8", errors="replace") as handle:
++            for raw in handle:
++                line = raw.strip()
++                if not line:
++                    continue
++                try:
++                    event = json.loads(line)
++                except (json.JSONDecodeError, ValueError):
++                    malformed += 1
++                    continue
++                if not isinstance(event, dict):
++                    malformed += 1
++                    continue
++                if event.get("event_type") != "request":
++                    other += 1
++                    continue
++                org = event.get("organisation_number")
++                if org:
++                    _accumulate(buckets.setdefault(str(org), _bucket()), event)
++                else:
++                    _accumulate(unattributed, event)
++    runtime: dict[str, int] = defaultdict(int)
++    if spans_path is not None and Path(spans_path).exists():
++        with Path(spans_path).open("r", encoding="utf-8", errors="replace") as handle:
++            for raw in handle:
++                line = raw.strip()
++                if not line:
++                    continue
++                try:
++                    span = json.loads(line)
++                except (json.JSONDecodeError, ValueError):
++                    continue
++                if isinstance(span, dict) and span.get("organisation_number"):
++                    runtime[str(span["organisation_number"])] += int(span.get("elapsed_ms") or 0)
++    result: dict[str, dict[str, Any]] = {}
++    for org in sorted(set(buckets) | set(runtime)):
++        bucket = buckets.get(org) or _bucket()
++        result[org] = {
++            "requests": bucket["requests"],
++            "bytes": bucket["bytes"],
++            "runtime_ms": runtime.get(org, 0),
++            "request_time_ms": bucket["request_time_ms"],
++            "third_party_cost_usd": math.fsum(bucket["costs"]),
++            "by_connector": _connector_view(bucket["by_connector"]),
++            "source": "request-log",
++        }
++    attributed = sum(item["requests"] for item in result.values())
++    summary = {
++        "lines_total": attributed + unattributed["requests"],
++        "lines_attributed": attributed,
++        "lines_unattributed": unattributed["requests"],
++        "malformed": malformed,
++        "other_lines": other,
++        "unattributed": {
++            "requests": unattributed["requests"],
++            "bytes": unattributed["bytes"],
++            "third_party_cost_usd": math.fsum(unattributed["costs"]),
++            "by_connector": _connector_view(unattributed["by_connector"]),
++        },
++    }
++    return result, summary
+ 
+ 
+ def read_events(path: Path) -> list[dict[str, Any]]:
+@@ -265,6 +515,7 @@ def build_metrics(
+     discovery_reports: list[dict[str, Any]] | None = None,
+ ) -> dict[str, Any]:
+     request_events = [event for event in events if event.get("event_type") == "request"]
++    request_summary = summarize_requests(request_events)
+     providers: dict[str, Counter] = defaultdict(Counter)
+     modules: Counter = Counter()
+     failure_classes: Counter = Counter()
+@@ -334,6 +585,10 @@ def build_metrics(
+             "cache_misses": sum(1 for event in request_events if event.get("cache_miss")),
+             "retry_attempts": retry_attempts,
+             "retry_successes": retry_successes,
++            "rate_limited_calls": sum(1 for event in request_events if event.get("http_status") == 429),
++            "bytes": request_summary["bytes"],
++            "third_party_cost_usd": request_summary["third_party_cost_usd"],
++            "by_connector": request_summary["by_connector"],
+             "by_failure_class": dict(sorted(failure_classes.items())),
+             "by_provider": dict(sorted(providers.items())),
+             "by_module": dict(sorted(modules.items())),
+@@ -345,5 +600,48 @@ def build_metrics(
+     }
+ 
+ 
++def reconcile_operations_report(report: dict[str, Any], run_metrics: dict[str, Any]) -> dict[str, Any]:
++    """Fill the run-metrics side of operations-report.json and decide `reconciled`.
++
++    reconciled is True only if ALL hold: the log has no unattributed or malformed lines; the sum of
++    envelope requests equals the log line count and run-metrics requests; summed envelope cost equals
++    run-metrics cost within 1e-9; summed by_connector equals run-metrics by_connector. A run with
++    source "unavailable" is never reconciled.
++    """
++    requests = run_metrics.get("requests") or {}
++    run_requests = int(requests.get("total_api_calls") or 0)
++    run_cost = float(requests.get("third_party_cost_usd") or 0.0)
++    run_connectors = requests.get("by_connector") or {}
++    envelope_connectors = report.get("by_connector_envelope") or {}
++
++    def same_connectors() -> bool:
++        if set(envelope_connectors) != set(run_connectors):
++            return False
++        return all(
++            int(envelope_connectors[name].get("requests", 0)) == int(run_connectors[name].get("requests", 0))
++            and int(envelope_connectors[name].get("bytes", 0)) == int(run_connectors[name].get("bytes", 0))
++            and abs(float(envelope_connectors[name].get("cost_usd", 0.0)) - float(run_connectors[name].get("cost_usd", 0.0))) <= 1e-9
++            for name in envelope_connectors
++        )
++
++    envelope_requests = int(report.get("envelope_requests_sum") or 0)
++    checks = {
++        "source_available": report.get("source") == "request-log",
++        "no_unattributed": int(report.get("log_lines_unattributed") or 0) == 0,
++        "no_malformed": int(report.get("malformed_lines") or 0) == 0,
++        "totals_add_up": envelope_requests + int(report.get("log_lines_unattributed") or 0) == int(report.get("log_lines_total") or 0),
++        "matches_run_metrics_requests": envelope_requests == run_requests,
++        "matches_run_metrics_cost": abs(float(report.get("cost_envelope_sum_usd") or 0.0) - run_cost) <= 1e-9,
++        "matches_run_metrics_connectors": same_connectors(),
++    }
++    report = dict(report)
++    report["run_metrics_requests"] = run_requests
++    report["cost_run_metrics_usd"] = run_cost
++    report["by_connector_run_metrics"] = run_connectors
++    report["reconcile_checks"] = checks
++    report["reconciled"] = all(checks.values())
++    return report
++
++
+ def monotonic_ms(started: float) -> int:
+     return int((time.monotonic() - started) * 1000)
+diff --git a/tests/test_phase3_envelope.py b/tests/test_phase3_envelope.py
+index d9182c6..9c358fe 100644
+--- a/tests/test_phase3_envelope.py
++++ b/tests/test_phase3_envelope.py
+@@ -176,7 +176,7 @@ def test_public_envelope_shape():
+     assert "profile" not in envelope
+     assert tuple(envelope["modules"]) == MODULE_KEYS
+     assert envelope["run"]["terminal_status"] == "completed"
+-    assert set(envelope["operations"]) == {"requests", "runtime_ms", "third_party_cost_usd"}
++    assert tuple(envelope["operations"]) == ("requests", "bytes", "runtime_ms", "request_time_ms", "third_party_cost_usd", "by_connector", "source")  # Phase 4 shape
+ 
+ 
+ def test_evidence_ids_are_org_scoped_zero_based_and_carry_no_value():
+diff --git a/tests/test_phase4_operations.py b/tests/test_phase4_operations.py
+new file mode 100644
+index 0000000..5650a52
+--- /dev/null
++++ b/tests/test_phase4_operations.py
+@@ -0,0 +1,168 @@
++import json
++import sys
++import threading
++from concurrent.futures import ThreadPoolExecutor
++from pathlib import Path
++
++sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
++
++from norway_company_agent import telemetry  # noqa: E402
++
++
++def _read(path):
++    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
++
++
++def test_company_context_isolation_across_pool_threads(tmp_path, monkeypatch):
++    log = tmp_path / "request-log.jsonl"
++    monkeypatch.setenv("SIGNALPOST_REQUEST_LOG", str(log))
++    orgs = [f"{900000000 + i}" for i in range(100)]
++
++    def worker(org):
++        # Context is entered INSIDE the worker: submit() does not copy context.
++        with telemetry.company_context(org):
++            for _ in range(3):
++                telemetry.record_request(module="registry_live", provider="BRREG", operation="GET", success=True, status=200)
++
++    with ThreadPoolExecutor(max_workers=12) as pool:
++        list(pool.map(worker, orgs))
++    events = _read(log)
++    assert len(events) == 300
++    assert all(event["organisation_number"] is not None for event in events)
++    counts = {}
++    for event in events:
++        counts[event["organisation_number"]] = counts.get(event["organisation_number"], 0) + 1
++    assert counts == {org: 3 for org in orgs}
++
++
++def test_context_reset_after_leaving(tmp_path, monkeypatch):
++    log = tmp_path / "request-log.jsonl"
++    monkeypatch.setenv("SIGNALPOST_REQUEST_LOG", str(log))
++    with ThreadPoolExecutor(max_workers=1) as pool:  # one reused thread
++        def inside():
++            with telemetry.company_context("810000001"):
++                telemetry.record_request(module="m", provider="BRREG", operation="GET", success=True, status=200)
++
++        def outside():
++            telemetry.record_request(module="m", provider="BRREG", operation="GET", success=True, status=200)
++
++        pool.submit(inside).result()
++        pool.submit(outside).result()
++    first, second = _read(log)
++    assert first["organisation_number"] == "810000001"
++    assert second["organisation_number"] is None
++
++
++def test_explicit_organisation_wins_over_context(tmp_path, monkeypatch):
++    log = tmp_path / "request-log.jsonl"
++    monkeypatch.setenv("SIGNALPOST_REQUEST_LOG", str(log))
++    with telemetry.company_context("810000001"):
++        telemetry.record_request(module="m", provider="BRREG", operation="GET", success=True, status=200, organisation_number="810000002")
++    assert _read(log)[0]["organisation_number"] == "810000002"
++
++
++def _line(org, provider, *, bytes_=0, cost=None, duration=10, status=200):
++    event = {"event_type": "request", "organisation_number": org, "module": "m", "provider": provider, "http_status": status, "success": status < 400, "duration_ms": duration, "bytes": bytes_}
++    if cost is not None:
++        event["cost_usd"] = cost
++    return json.dumps(event)
++
++
++def test_build_operations_by_org_exact(tmp_path):
++    log = tmp_path / "request-log.jsonl"
++    spans = tmp_path / "company-spans.jsonl"
++    log.write_text("\n".join([
++        _line("810000001", "BRREG", bytes_=100, duration=20),
++        _line("810000001", "website/http", bytes_=50, duration=30),
++        _line("810000002", "Tavily", bytes_=7, cost=0.008, duration=5),
++        _line("810000002", "Exa", cost=0.007),
++        "<<<<<<< HEAD",  # malformed
++        "",
++        _line(None, "BRREG", bytes_=11),
++        json.dumps({"event_type": "other"}),
++        _line("810000003", "BRREG", status=404),
++    ]) + "\n", encoding="utf-8")
++    spans.write_text(json.dumps({"organisation_number": "810000001", "stage": "registry", "elapsed_ms": 400}) + "\n" + json.dumps({"organisation_number": "810000001", "stage": "discovery", "elapsed_ms": 100}) + "\n", encoding="utf-8")
++    result, summary = telemetry.build_operations_by_org(log, spans)
++    assert list(result) == ["810000001", "810000002", "810000003"]
++    one = result["810000001"]
++    assert (one["requests"], one["bytes"], one["runtime_ms"], one["request_time_ms"], one["source"]) == (2, 150, 500, 50, "request-log")
++    assert one["by_connector"] == {"company_site": {"requests": 1, "bytes": 50, "cost_usd": 0.0}, "official_brreg": {"requests": 1, "bytes": 100, "cost_usd": 0.0}}
++    two = result["810000002"]
++    assert abs(two["third_party_cost_usd"] - 0.015) < 1e-12
++    assert two["runtime_ms"] == 0
++    assert set(two["by_connector"]) == {"tavily", "exa"}
++    assert summary["malformed"] == 1
++    assert summary["other_lines"] == 1
++    assert summary["lines_unattributed"] == 1
++    assert summary["unattributed"]["bytes"] == 11
++    assert summary["lines_total"] == 6 and summary["lines_attributed"] == 5
++
++
++def test_build_operations_is_deterministic(tmp_path):
++    log = tmp_path / "request-log.jsonl"
++    log.write_text("\n".join(_line(f"81000000{i % 3}", "BRREG", bytes_=i, cost=0.001 * i) for i in range(30)) + "\n", encoding="utf-8")
++    first = json.dumps(telemetry.build_operations_by_org(log)[0], sort_keys=True)
++    second = json.dumps(telemetry.build_operations_by_org(log)[0], sort_keys=True)
++    assert first == second
++
++
++def test_run_level_summary_matches_per_org_sum(tmp_path):
++    log = tmp_path / "request-log.jsonl"
++    lines = [_line(f"81000000{i % 4}", ["BRREG", "Tavily", "website/http"][i % 3], bytes_=i, cost=0.003 * (i % 2)) for i in range(40)]
++    log.write_text("\n".join(lines) + "\n", encoding="utf-8")
++    events = [json.loads(line) for line in lines]
++    run = telemetry.summarize_requests(events)
++    per_org, _ = telemetry.build_operations_by_org(log)
++    assert run["requests"] == sum(item["requests"] for item in per_org.values())
++    assert abs(run["third_party_cost_usd"] - sum(item["third_party_cost_usd"] for item in per_org.values())) < 1e-9
++    for name, part in run["by_connector"].items():
++        assert part["requests"] == sum(item["by_connector"].get(name, {}).get("requests", 0) for item in per_org.values())
++
++
++def test_company_span_writes_only_when_configured(tmp_path, monkeypatch):
++    spans = tmp_path / "company-spans.jsonl"
++    with telemetry.company_span("810000001", "registry"):
++        pass
++    assert not spans.exists()
++    monkeypatch.setenv("SIGNALPOST_SPANS_LOG", str(spans))
++    with telemetry.company_span("810000001", "registry"):
++        pass
++    row = _read(spans)[0]
++    assert row["organisation_number"] == "810000001" and row["stage"] == "registry" and row["elapsed_ms"] >= 0
++
++
++def test_reconcile_operations_report():
++    report = {"source": "request-log", "log_lines_total": 5, "log_lines_unattributed": 0, "malformed_lines": 0, "envelope_requests_sum": 5, "cost_envelope_sum_usd": 0.01, "by_connector_envelope": {"exa": {"requests": 5, "bytes": 0, "cost_usd": 0.01}}}
++    metrics = {"requests": {"total_api_calls": 5, "third_party_cost_usd": 0.01, "by_connector": {"exa": {"requests": 5, "bytes": 0, "cost_usd": 0.01}}}}
++    assert telemetry.reconcile_operations_report(report, metrics)["reconciled"] is True
++    metrics["requests"]["total_api_calls"] = 6
++    assert telemetry.reconcile_operations_report(report, metrics)["reconciled"] is False
++
++
++def test_scrapy_middleware_logs_with_meta_org(tmp_path, monkeypatch):
++    import importlib.util
++    pytest = __import__("pytest")
++    pytest.importorskip("scrapy")
++    root = Path(__file__).resolve().parent.parent
++    spec = importlib.util.spec_from_file_location("scrapy_crawler_under_test", root / "archive" / "v2-crawler" / "scrapy_crawler.py")
++    module = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(module)
++    from scrapy.http import HtmlResponse, Request
++
++    log = tmp_path / "request-log.jsonl"
++    monkeypatch.setenv("SIGNALPOST_REQUEST_LOG", str(log))
++
++    class FakeCrawler:
++        pass
++
++    middleware = module.OperationalTelemetryMiddleware(FakeCrawler())
++    request = Request("https://example.no/", meta={"organisation_number": "810000001"})
++    middleware.process_request(request, None)
++    middleware.process_response(request, HtmlResponse("https://example.no/", body=b"<html>ok</html>", request=request), None)
++    robots = Request("https://example.no/robots.txt")  # no meta: mapped through the host
++    middleware.process_request(robots, None)
++    middleware.process_response(robots, HtmlResponse("https://example.no/robots.txt", body=b"", status=404, request=robots), None)
++    first, second = _read(log)
++    assert first["organisation_number"] == "810000001" and first["bytes"] == len(b"<html>ok</html>") and first["provider"] == "website/scrapy"
++    assert second["organisation_number"] == "810000001" and second["http_status"] == 404
+diff --git a/tests/test_phase4_rate_limit.py b/tests/test_phase4_rate_limit.py
+new file mode 100644
+index 0000000..147e0f7
+--- /dev/null
++++ b/tests/test_phase4_rate_limit.py
+@@ -0,0 +1,205 @@
++import io
++import json
++import sys
++import threading
++import urllib.error
++from email.message import Message
++from pathlib import Path
++
++sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
++
++import pytest  # noqa: E402
++
++from norway_company_agent import http as http_module  # noqa: E402
++from norway_company_agent import rate_limit  # noqa: E402
++from norway_company_agent.rate_limit import RateLimiter  # noqa: E402
++
++HISTORY_URL = "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/810034882/aar"
++
++
++class FakeClock:
++    def __init__(self):
++        self.now = 1000.0
++        self.sleeps = []
++        self.lock = threading.Lock()
++
++    def clock(self):
++        return self.now
++
++    def sleep(self, seconds):
++        with self.lock:
++            self.sleeps.append(seconds)
++
++
++def test_limiter_spaces_ten_threads_two_seconds_apart():
++    fake = FakeClock()
++    limiter = RateLimiter(2.0, clock=fake.clock, sleep=fake.sleep)
++    waits = []
++    lock = threading.Lock()
++
++    def call():
++        wait = limiter.acquire()
++        with lock:
++            waits.append(wait)
++
++    threads = [threading.Thread(target=call) for _ in range(10)]
++    [t.start() for t in threads]
++    [t.join() for t in threads]
++    assert sorted(waits) == [2.0 * i for i in range(10)]  # slots exactly 2.0 s apart
++
++
++def test_zero_interval_never_sleeps():
++    fake = FakeClock()
++    limiter = RateLimiter(0, clock=fake.clock, sleep=fake.sleep)
++    assert [limiter.acquire() for _ in range(5)] == [0.0] * 5
++    assert fake.sleeps == []
++
++
++def test_penalize_delays_all_callers_even_without_interval():
++    fake = FakeClock()
++    limiter = RateLimiter(0, clock=fake.clock, sleep=fake.sleep)
++    limiter.penalize(3.0)
++    assert limiter.wait_for_penalty() == 3.0
++    limiter2 = RateLimiter(2.0, clock=fake.clock, sleep=fake.sleep)
++    limiter2.penalize(10.0)
++    assert limiter2.acquire() == 10.0
++
++
++def test_limiter_for_matches_only_history_endpoint(monkeypatch):
++    rate_limit.reset_limiters()
++    monkeypatch.delenv("SIGNALPOST_RATE_LIMITS", raising=False)
++    assert rate_limit.limiter_for(HISTORY_URL) is not None
++    assert rate_limit.limiter_for(HISTORY_URL).min_interval_s == 0.0
++    assert rate_limit.limiter_for("https://data.brreg.no/enhetsregisteret/api/enheter/810034882") is None
++    assert rate_limit.limiter_for("https://data.brreg.no/regnskapsregisteret/regnskap/810034882") is None
++    assert rate_limit.limiter_for("https://example.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/810034882/aar") is None
++    assert rate_limit.limiter_for(HISTORY_URL) is rate_limit.limiter_for(HISTORY_URL)  # shared instance
++
++
++def test_env_override_and_invalid_json(monkeypatch, capsys):
++    rate_limit.reset_limiters()
++    monkeypatch.setenv("SIGNALPOST_RATE_LIMITS", '{"brreg_history": 2.1}')
++    assert rate_limit.limiter_for(HISTORY_URL).min_interval_s == 2.1
++    rate_limit.reset_limiters()
++    monkeypatch.setenv("SIGNALPOST_RATE_LIMITS", "{not json")
++    assert rate_limit.limiter_for(HISTORY_URL).min_interval_s == 0.0
++    rate_limit.limiter_for(HISTORY_URL)
++    assert capsys.readouterr().err.count("SIGNALPOST_RATE_LIMITS") == 1  # one warning, no crash
++
++
++def test_parse_retry_after():
++    from datetime import datetime, timezone
++    assert rate_limit.parse_retry_after("3") == 3.0
++    assert rate_limit.parse_retry_after("9999") == 120.0
++    assert rate_limit.parse_retry_after(None) is None
++    assert rate_limit.parse_retry_after("garbage") is None
++    now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
++    assert rate_limit.parse_retry_after("Thu, 01 Jan 2026 12:00:07 GMT", now=now) == 7.0
++    assert rate_limit.parse_retry_after("Thu, 01 Jan 2026 11:00:00 GMT", now=now) == 0.0
++
++
++class _Response:
++    status = 200
++
++    def __init__(self, body):
++        self._body = body
++
++    def read(self):
++        return self._body
++
++    def __enter__(self):
++        return self
++
++    def __exit__(self, *exc):
++        return False
++
++
++def _http_429(retry_after):
++    headers = Message()
++    if retry_after is not None:
++        headers["Retry-After"] = retry_after
++    return urllib.error.HTTPError(HISTORY_URL, 429, "Too Many Requests", headers, io.BytesIO(b"slow down"))
++
++
++def _read_log(path):
++    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
++
++
++def test_fetch_json_honours_retry_after_and_logs_each_attempt(tmp_path, monkeypatch):
++    rate_limit.reset_limiters()
++    log = tmp_path / "request-log.jsonl"
++    monkeypatch.setenv("SIGNALPOST_REQUEST_LOG", str(log))
++    monkeypatch.delenv("SIGNALPOST_RATE_LIMITS", raising=False)
++    calls = []
++
++    def fake_urlopen(request, timeout=None):
++        calls.append(request.full_url)
++        if len(calls) == 1:
++            raise _http_429("3")
++        return _Response(b'["2024","2025"]')
++
++    sleeps = []
++    monkeypatch.setattr(http_module.urllib.request, "urlopen", fake_urlopen)
++    monkeypatch.setattr(http_module.time, "sleep", lambda seconds: sleeps.append(seconds))
++    result = http_module.fetch_json(HISTORY_URL, module="financial_history", organisation_number="810034882")
++    assert result.status == 200 and result.body == ["2024", "2025"]
++    assert 3.0 in sleeps
++    events = _read_log(log)
++    assert [event["http_status"] for event in events] == [429, 200]
++    assert events[1]["attempt"] == 2 and events[1]["retry"] is True
++    assert events[0]["bytes"] == len(b"slow down") and events[1]["bytes"] == len(b'["2024","2025"]')
++
++
++def test_fetch_json_exhausted_429_is_marked_rate_limited(tmp_path, monkeypatch):
++    rate_limit.reset_limiters()
++    monkeypatch.setenv("SIGNALPOST_REQUEST_LOG", str(tmp_path / "request-log.jsonl"))
++
++    def always_429(request, timeout=None):
++        raise _http_429("1")
++
++    monkeypatch.setattr(http_module.urllib.request, "urlopen", always_429)
++    monkeypatch.setattr(http_module.time, "sleep", lambda seconds: None)
++    result = http_module.fetch_json(HISTORY_URL, module="financial_history", organisation_number="810034882")
++    assert result.status == 0 and "rate_limited" in result.error
++    from norway_company_agent.official import _classified
++    record = _classified("financial_history", "official_annual_account_copies", result)
++    assert record["status"] == "source_error" and "rate_limited" in record["note"]
++
++
++def test_fetch_json_404_still_not_found(tmp_path, monkeypatch):
++    rate_limit.reset_limiters()
++    monkeypatch.setenv("SIGNALPOST_REQUEST_LOG", str(tmp_path / "request-log.jsonl"))
++
++    def not_found(request, timeout=None):
++        raise urllib.error.HTTPError(HISTORY_URL, 404, "nf", Message(), io.BytesIO(b""))
++
++    monkeypatch.setattr(http_module.urllib.request, "urlopen", not_found)
++    result = http_module.fetch_json(HISTORY_URL, module="financial_history", organisation_number="810034882")
++    assert result.status == 404 and result.failure_class == "not_found"
++
++
++def test_fetch_json_acquires_limiter_per_attempt(tmp_path, monkeypatch):
++    rate_limit.reset_limiters()
++    monkeypatch.setenv("SIGNALPOST_REQUEST_LOG", str(tmp_path / "request-log.jsonl"))
++    monkeypatch.setenv("SIGNALPOST_RATE_LIMITS", '{"brreg_history": 2.1}')
++    acquired = []
++    original = RateLimiter.acquire
++
++    def counting(self):
++        acquired.append(1)
++        return 0.0
++
++    monkeypatch.setattr(RateLimiter, "acquire", counting)
++    attempts = []
++
++    def flaky(request, timeout=None):
++        attempts.append(1)
++        if len(attempts) < 3:
++            raise _http_429(None)
++        return _Response(b"[]")
++
++    monkeypatch.setattr(http_module.urllib.request, "urlopen", flaky)
++    monkeypatch.setattr(http_module.time, "sleep", lambda seconds: None)
++    monkeypatch.setattr(RateLimiter, "wait_for_penalty", lambda self: 0.0)
++    assert http_module.fetch_json(HISTORY_URL, organisation_number="810034882").status == 200
++    assert len(acquired) == 3  # once per attempt, not once per call

@@ -3,10 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .changes import diff_claims
-<<<<<<< HEAD
 from .vocabulary import MODULE_KEYS, SCHEMA_VERSION, derive_terminal_status, module_states
-=======
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 from .website import normalize_website_value
 
 
@@ -132,7 +129,6 @@ def assert_claim_schema_integrity(envelope: dict[str, Any]) -> None:
                 f"({type(claim['value']).__name__}) — failed/blocked claims must have value=None"
             )
 
-<<<<<<< HEAD
         # 8. not_available means no data exists; a confidence score for it is meaningless.
         if avail == "not_available" and claim.get("confidence") is not None:
             violations.append(
@@ -140,8 +136,6 @@ def assert_claim_schema_integrity(envelope: dict[str, Any]) -> None:
                 f"got {claim.get('confidence')}"
             )
 
-=======
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
     if violations:
         raise ClaimSchemaError(
             f"Claim schema integrity check failed ({len(violations)} violation(s)):\n"
@@ -181,7 +175,6 @@ OBSERVATION_CLAIM_FIELDS = {
     "prior_year_financials": "prior_year_financials",
 }
 
-<<<<<<< HEAD
 CONTACT_CLAIM_FIELDS = ("phones", "emails", "website_addresses", "social_profiles")
 
 # Every envelope carries exactly these claims, in this order. A field with no data
@@ -202,8 +195,6 @@ PUBLIC_RUN_KEYS = ("run_id", "started_at", "completed_at", "terminal_status")
 # Evidence carries provenance only. Values live in claims, nowhere else.
 PUBLIC_EVIDENCE_KEYS = ("id", "source_url", "source_class", "retrieved_at", "content_sha256", "claim_span")
 
-=======
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 
 def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = None, previous_envelope: dict[str, Any] | None = None) -> dict[str, Any]:
     profile = row.get("profile") if isinstance(row.get("profile"), dict) else row
@@ -213,10 +204,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = 
     evidence_items: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     evidence_ids: dict[str, str] = {}
-<<<<<<< HEAD
     seen_observation_fields: set[str] = set()
-=======
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 
     def add_evidence(
         key: str,
@@ -224,18 +212,10 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = 
         *,
         claim_span: str,
         availability: str,
-<<<<<<< HEAD
     ) -> str:
         if key in evidence_ids:
             return evidence_ids[key]
         item_id = f"ev-{organisation_number}-{len(evidence_items)}"
-=======
-        value: Any = None,
-    ) -> str:
-        if key in evidence_ids:
-            return evidence_ids[key]
-        item_id = f"ev-{len(evidence_items) + 1}"
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
         evidence_ids[key] = item_id
         source_class = str(record.get("source_class") or record.get("source_type") or "unknown")
         if source_class in {"registry_linked_company_website", "company_site"}:
@@ -245,22 +225,12 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = 
             "source_url": str(record.get("source_url") or ""),
             "source_class": source_class,
             "retrieved_at": str(record.get("retrieved_at") or ""),
-<<<<<<< HEAD
             "content_sha256": record.get("content_sha256") or None,
             "claim_span": claim_span[:400],
             # Internal only: read by the integrity assertions, stripped before output.
             "module": str(record.get("field") or key),
             "status": availability,
         }
-=======
-            "content_sha256": record.get("content_sha256") or "",
-            "claim_span": claim_span[:400],
-            "module": str(record.get("field") or key),
-            "status": availability,
-        }
-        if value is not None:
-            item["value"] = value
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
         evidence_items.append(item)
         return item_id
 
@@ -272,11 +242,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = 
             registry_span = _claim_span(profile, registry)
             registry_id = add_evidence(
                 "registry_live", registry, claim_span=registry_span,
-<<<<<<< HEAD
                 availability=availability,
-=======
-                availability=availability, value=registry.get("value"),
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
             )
             for field, path in REGISTRY_CLAIM_FIELDS:
                 claims.append(_claim(
@@ -286,11 +252,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = 
             _append_error(errors, "registry_live", registry, availability)
 
     website_record = records.get("website") if isinstance(records.get("website"), dict) else None
-<<<<<<< HEAD
     website_claim, website_error, _ = _website_claim(registry_value, website_record)
-=======
-    website_claim, website_error, website_evidence_value = _website_claim(registry_value, website_record)
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
     if website_claim:
         website_evidence = website_record or registry
         if website_evidence:
@@ -300,10 +262,6 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = 
                 website_evidence,
                 claim_span=_claim_span(profile, website_evidence),
                 availability=website_availability,
-<<<<<<< HEAD
-=======
-                value=website_evidence_value,
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
             )
             website_claim["evidence_ids"] = [website_id]
         claims.append(website_claim)
@@ -329,11 +287,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = 
         value = record.get("value") if availability in {"available", "not_available"} else None
         evidence_id = add_evidence(
             field, record, claim_span=_claim_span(profile, record),
-<<<<<<< HEAD
             availability=availability,
-=======
-            availability=availability, value=value,
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
         )
         claims.append(_claim(field, value, availability, _confidence(availability, official=True), [evidence_id]))
         _append_error(errors, field, record, availability)
@@ -343,14 +297,9 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = 
             continue
         signal = str(observation.get("signal_type") or observation.get("field") or "")
         field = OBSERVATION_CLAIM_FIELDS.get(signal)
-<<<<<<< HEAD
         if not field or field in seen_observation_fields:
             continue
         seen_observation_fields.add(field)
-=======
-        if not field:
-            continue
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
         value = observation.get("metrics")
         availability = _observation_availability(field, value)
         record = {
@@ -367,36 +316,12 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = 
             record,
             claim_span=str(observation.get("evidence_span") or _claim_span(profile, record)),
             availability=availability,
-<<<<<<< HEAD
         )
         claims.append(_claim(field, value, availability, _confidence(availability), [evidence_id]))
 
     claims = _complete_claims(claims)
     modules = module_states(profile)
     ops = _operations(metrics, profile)
-=======
-            value=value,
-        )
-        claims.append(_claim(field, value, availability, _confidence(availability), [evidence_id]))
-
-    # Build the operations block.  When telemetry metrics are supplied by the
-    # caller (e.g. from run_agent.py), use them for requests/runtime.  When
-    # they are not (e.g. build_output_contract.py path), derive what we can
-    # from the row's modules dict and evidence records.
-    if metrics:
-        ops = _operations(metrics)
-        # Supplement with module-level detail derived from the row when present.
-        row_ops = _derive_operations_from_row(row, profile)
-        for key in ("successful_modules", "failed_modules", "not_found_modules",
-                    "pages_crawled", "pages_failed", "retried_module_attempts"):
-            if key in row_ops:
-                ops.setdefault(key, row_ops[key])
-        # Use derived cost when telemetry doesn't carry it.
-        if not ops.get("third_party_cost_usd"):
-            ops["third_party_cost_usd"] = row_ops.get("third_party_cost_usd", 0)
-    else:
-        ops = _derive_operations_from_row(row, profile)
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 
     # Compute changes[] by comparing current normalized claims against the
     # previous envelope's normalized claims.  When no previous envelope is
@@ -416,23 +341,15 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = 
         computed_changes = []
 
     envelope = {
-<<<<<<< HEAD
         "schema_version": SCHEMA_VERSION,
-=======
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
         "organisation_number": organisation_number,
         "run": {
             "run_id": str(row.get("run_id") or ""),
             "started_at": str(row.get("started_at") or ""),
             "completed_at": str(row.get("completed_at") or ""),
-<<<<<<< HEAD
             "terminal_status": derive_terminal_status(modules),
         },
         "modules": modules,
-=======
-            "terminal_status": _terminal_status(row),
-        },
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
         "claims": claims,
         "evidence": evidence_items,
         "changes": computed_changes,
@@ -441,7 +358,6 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = 
     }
     assert_evidence_integrity(envelope)
     assert_claim_schema_integrity(envelope)
-<<<<<<< HEAD
     envelope["evidence"] = [{key: item[key] for key in PUBLIC_EVIDENCE_KEYS} for item in evidence_items]
     return envelope
 
@@ -496,11 +412,6 @@ def conversion_failure_envelope(row: dict[str, Any], error: Exception) -> dict[s
     }
 
 
-=======
-    return envelope
-
-
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 def _availability(record: dict[str, Any], *, field: str | None = None) -> str | None:
     status = record.get("status")
     if status == "not_fetched":
@@ -551,11 +462,7 @@ def _website_claim(
     if registered_site:
         return _claim("official_website", registered_site, "available", 0.99, []), None, registry_value
     if registry_value:
-<<<<<<< HEAD
         return _claim("official_website", None, "not_available", None, []), None, registry_value
-=======
-        return _claim("official_website", None, "not_available", 0.8, []), None, registry_value
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
     return None, None, None
 
 
@@ -590,11 +497,7 @@ def _claim(
     field: str,
     value: Any,
     availability: str,
-<<<<<<< HEAD
     confidence: float | None,
-=======
-    confidence: float,
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
     evidence_ids: list[str],
 ) -> dict[str, Any]:
     if availability not in ALLOWED_AVAILABILITY:
@@ -630,11 +533,7 @@ def _claim_span(profile: dict[str, Any], record: dict[str, Any]) -> str:
     return ". ".join(parts)[:400]
 
 
-<<<<<<< HEAD
 def _confidence(availability: str, *, identity_score: Any = None, official: bool = False) -> float | None:
-=======
-def _confidence(availability: str, *, identity_score: Any = None, official: bool = False) -> float:
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
     if availability == "failed":
         return 0.0
     if availability == "ambiguous":
@@ -647,12 +546,8 @@ def _confidence(availability: str, *, identity_score: Any = None, official: bool
     if availability == "not_applicable":
         return 1.0
     if availability == "not_available":
-<<<<<<< HEAD
         # No data exists, so there is nothing to be confident about.
         return None
-=======
-        return 0.8
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
     if official:
         return 0.99
     try:
@@ -672,7 +567,6 @@ def _nested_get(value: dict[str, Any], path: str | tuple[str, ...]) -> Any:
     return current
 
 
-<<<<<<< HEAD
 def _operations(metrics: dict[str, Any] | None, profile: dict[str, Any]) -> dict[str, Any]:
     """requests / runtime_ms / third_party_cost_usd, always the same three keys.
 
@@ -683,34 +577,12 @@ def _operations(metrics: dict[str, Any] | None, profile: dict[str, Any]) -> dict
     cost = _third_party_cost(profile)
     if not metrics:
         return {"requests": 0, "runtime_ms": 0, "third_party_cost_usd": cost}
-=======
-def _terminal_status(row: dict[str, Any]) -> str:
-    state = str(row.get("state") or "")
-    if state == "complete":
-        return "completed"
-    if state.startswith("blocked"):
-        return "blocked"
-    return "failed" if state else "completed"
-
-
-def _operations(metrics: dict[str, Any] | None) -> dict[str, Any]:
-    """Build the operations block from telemetry metrics when available.
-
-    When telemetry metrics are passed (from aggregate_company_metrics in
-    telemetry.py) the three core fields are populated from them.  When not,
-    the caller is expected to have already called _derive_operations_from_row()
-    and passed its result here via the metrics parameter.
-    """
-    if not metrics:
-        return {"requests": 0, "runtime_ms": 0, "third_party_cost_usd": 0}
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
     runtime = int(metrics.get("wall_clock_duration_ms") or 0)
     if runtime <= 0:
         runtime = int(metrics.get("sum_request_duration_ms") or metrics.get("duration_ms") or 0)
     return {
         "requests": int(metrics.get("api_request_count") or 0),
         "runtime_ms": runtime,
-<<<<<<< HEAD
         "third_party_cost_usd": float(metrics.get("third_party_cost_usd") or 0) or cost,
     }
 
@@ -729,110 +601,6 @@ def _third_party_cost(profile: dict[str, Any]) -> float:
         except (TypeError, ValueError):
             pass
     return round(total, 6)
-=======
-        "third_party_cost_usd": float(metrics.get("third_party_cost_usd") or 0),
-    }
-
-
-# Module states that map to "completed successfully" (clean terminal states).
-_MODULE_SUCCESS_STATES = frozenset({"complete", "not_applicable", "not_found"})
-# Module states that indicate an actual failure / retrieval error.
-_MODULE_FAILED_STATES = frozenset({
-    "source_error", "submission_error", "budget_exhausted",
-    "blocked_policy", "blocked_robots",
-})
-# Module states where the resource was simply absent (clean, not an error).
-_MODULE_NOT_FOUND_STATES = frozenset({"not_found"})
-
-
-def _derive_operations_from_row(row: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
-    """Derive best-effort operations metadata from the raw row when telemetry
-    metrics are not available (the common path through build_output_contract.py).
-
-    Sources used (read-only; no mutation of extraction data):
-    - ``row["modules"]``  – {module: {state, retry_count, final_timestamp}}
-    - profile evidence records – for cost_usd (discovery) and pages (website)
-
-    Nothing is fabricated.  Values that cannot be derived reliably are set to
-    0 rather than guessed, and optional fields are omitted when empty.
-    """
-    modules: dict[str, Any] = row.get("modules") or {}
-    records: dict[str, Any] = profile.get("evidence") or {}
-
-    successful: list[str] = []
-    failed: list[str] = []
-    not_found: list[str] = []
-    total_retries: int = 0
-
-    for mod_name, mod_info in modules.items():
-        if not isinstance(mod_info, dict):
-            continue
-        state = str(mod_info.get("state") or "")
-        retry_count = int(mod_info.get("retry_count") or 0)
-        total_retries += retry_count
-
-        if state in _MODULE_FAILED_STATES:
-            failed.append(mod_name)
-        elif state in _MODULE_NOT_FOUND_STATES:
-            # not_found is a clean terminal state — the HTTP request succeeded
-            not_found.append(mod_name)
-            successful.append(mod_name)
-        elif state in _MODULE_SUCCESS_STATES:
-            successful.append(mod_name)
-
-    # -- pages_crawled / pages_failed from website evidence --
-    pages_crawled: int = 0
-    pages_failed: int = 0
-    _failed_extraction_states = {
-        "failed", "oversized", "unsupported_content",
-        "redirect_outside_domain", "robots_blocked",
-    }
-    for key in ("website", "website_discovered"):
-        rec = records.get(key)
-        if not isinstance(rec, dict) or rec.get("status") != "available":
-            continue
-        val = rec.get("value") if isinstance(rec.get("value"), dict) else {}
-        for page in val.get("pages") or []:
-            if not isinstance(page, dict):
-                continue
-            if page.get("extraction_state") in _failed_extraction_states or page.get("errors"):
-                pages_failed += 1
-            else:
-                pages_crawled += 1
-
-    # -- third_party_cost_usd from discovery provider cost fields --
-    # BRREG (official registry data) is free.  Discovery providers (Exa, Tavily)
-    # write a cost_usd value into the website evidence record value dict.
-    third_party_cost: float = 0.0
-    for key in ("website", "website_discovered", "website_discovery"):
-        rec = records.get(key)
-        if not isinstance(rec, dict):
-            continue
-        val = rec.get("value") if isinstance(rec.get("value"), dict) else {}
-        try:
-            third_party_cost += float(val.get("cost_usd") or 0.0)
-        except (TypeError, ValueError):
-            pass
-
-    ops: dict[str, Any] = {
-        "requests": 0,            # not derivable without telemetry log; 0 is honest
-        "runtime_ms": 0,           # not derivable without telemetry log; 0 is honest
-        "third_party_cost_usd": round(third_party_cost, 6),
-    }
-
-    if modules:
-        ops["successful_modules"] = sorted(set(successful))
-        ops["failed_modules"] = sorted(set(failed))
-        ops["not_found_modules"] = sorted(set(not_found))
-        if total_retries:
-            ops["retried_module_attempts"] = total_retries
-
-    if pages_crawled or pages_failed:
-        ops["pages_crawled"] = pages_crawled
-        ops["pages_failed"] = pages_failed
-
-    return ops
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 
 
 # ---------------------------------------------------------------------------
@@ -880,10 +648,6 @@ def _website_contact_claims(
             website_rec,
             claim_span=_claim_span(profile, website_rec),
             availability=avail,
-<<<<<<< HEAD
-=======
-            value=website_value if crawled else None,
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
         )
     else:
         ev_id = evidence_ids_map[website_key]

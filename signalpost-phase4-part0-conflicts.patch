@@ -1,0 +1,1518 @@
+diff --git a/requirements.txt b/requirements.txt
+index f6de037..9e7bd4a 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -6,7 +6,6 @@ rapidfuzz>=3,<4
+ tldextract>=5,<6
+ trafilatura>=2,<3
+ pypdf>=5,<7
+-<<<<<<< HEAD
+ 
+ # Required for stages 3-4: multi-page crawl and HTML/XML parsing.
+ scrapy==2.19.0
+@@ -14,5 +13,3 @@ lxml==6.1.3
+ 
+ # Optional: psutil is only needed for process/resource monitoring helpers.
+ # psutil>=7,<8
+-=======
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+diff --git a/scripts/build_output_contract.py b/scripts/build_output_contract.py
+index 9a54ea5..6c65aa8 100644
+--- a/scripts/build_output_contract.py
++++ b/scripts/build_output_contract.py
+@@ -4,13 +4,9 @@ from __future__ import annotations
+ import argparse
+ import copy
+ import json
+-<<<<<<< HEAD
+ import os
+ import sys
+ import uuid
+-=======
+-import sys
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+ from pathlib import Path
+ 
+ 
+@@ -18,14 +14,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ sys.path.insert(0, str(PROJECT_ROOT / "src"))
+ 
+ from norway_company_agent.batch import terminal_envelope  # noqa: E402
+-<<<<<<< HEAD
+ from norway_company_agent.output_contract import conversion_failure_envelope, to_public_envelope  # noqa: E402
+ from norway_company_agent.vocabulary import SCHEMA_VERSION  # noqa: E402
+ 
+ ENVELOPE_FORMATS = ("public", "fat")
+-=======
+-from norway_company_agent.output_contract import to_public_envelope  # noqa: E402
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+ 
+ 
+ def read_jsonl(path: Path) -> list[dict]:
+@@ -34,7 +26,6 @@ def read_jsonl(path: Path) -> list[dict]:
+     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+ 
+ 
+-<<<<<<< HEAD
+ def atomic_write_text(path: Path, value: str) -> None:
+     path.parent.mkdir(parents=True, exist_ok=True)
+     temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+@@ -62,8 +53,6 @@ def atomic_write_jsonl(path: Path, rows: list[dict]) -> None:
+         temporary.unlink(missing_ok=True)
+ 
+ 
+-=======
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+ def observations_by_organisation(paths: list[str]) -> dict[str, list[dict]]:
+     grouped: dict[str, list[dict]] = {}
+     for raw_path in paths:
+@@ -76,18 +65,13 @@ def observations_by_organisation(paths: list[str]) -> dict[str, list[dict]]:
+ 
+ 
+ def attach_claims(envelope: dict) -> dict:
+-<<<<<<< HEAD
+     """Fat format: add the public claims/evidence projection to the fat envelope."""
+-=======
+-    """Add the public claims/evidence projection without changing the fat envelope."""
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+     public = to_public_envelope(envelope)
+     envelope["claims"] = public["claims"]
+     envelope["evidence"] = public["evidence"]
+     return envelope
+ 
+ 
+-<<<<<<< HEAD
+ def build_fat(
+     row: dict,
+     *,
+@@ -109,8 +93,6 @@ def build_fat(
+     )
+ 
+ 
+-=======
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+ def build_envelope(
+     row: dict,
+     *,
+@@ -118,7 +100,6 @@ def build_envelope(
+     started_at: str,
+     completed_at: str,
+     observations: list[dict],
+-<<<<<<< HEAD
+     envelope_format: str = "public",
+ ) -> dict:
+     if envelope_format not in ENVELOPE_FORMATS:
+@@ -140,54 +121,15 @@ def main() -> int:
+     p.add_argument("--input", help="Compatible alias for input profiles/envelopes path")
+     p.add_argument("--profiles", help="Profiles JSONL file to convert")
+     p.add_argument("--output", required=True, help="Envelopes JSONL output path")
+-=======
+-) -> dict:
+-    if row.get("profile") is not None and row.get("modules") is not None:
+-        envelope = copy.deepcopy(row)
+-        if run_id:
+-            envelope["run_id"] = run_id
+-        if started_at:
+-            envelope["started_at"] = started_at
+-        if completed_at:
+-            envelope["completed_at"] = completed_at
+-        if observations:
+-            profile = copy.deepcopy(envelope.get("profile") or {})
+-            profile["observations"] = observations
+-            envelope["profile"] = profile
+-        return attach_claims(envelope)
+-
+-    profile = copy.deepcopy(row.get("profile") or row)
+-    if observations:
+-        profile["observations"] = observations
+-    modules = list((profile.get("evidence") or {}).keys())
+-    envelope = terminal_envelope(
+-        profile,
+-        run_id=run_id or "run-v1",
+-        modules=modules,
+-        started_at=started_at,
+-        completed_at=completed_at,
+-    )
+-    return attach_claims(envelope)
+-
+-
+-def main() -> int:
+-    p = argparse.ArgumentParser(description="Minimal output contract builder for V1")
+-    p.add_argument("--input", help="Compatible alias for input profiles/envelopes path")
+-    p.add_argument("--profiles", help="Profiles JSONL file to convert")
+-    p.add_argument("--output", required=True, help="Fat envelopes JSONL output path")
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+     p.add_argument("--report", help="Optional report output path")
+     p.add_argument("--run-id", default="")
+     p.add_argument("--started-at", default="")
+     p.add_argument("--completed-at", default="")
+     p.add_argument("--observations", action="append", default=[])
+-<<<<<<< HEAD
+     p.add_argument(
+         "--envelope-format", choices=ENVELOPE_FORMATS, default="public",
+         help="public: claims-based output (default). fat: legacy envelope with the full profile.",
+     )
+-=======
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+     args = p.parse_args()
+ 
+     source_path = Path(args.input or args.profiles or "")
+@@ -200,7 +142,6 @@ def main() -> int:
+     report_path = Path(args.report) if args.report else output_path.parent / "contract-report.json"
+ 
+     rows = read_jsonl(source_path)
+-<<<<<<< HEAD
+     public_rows = [row for row in rows if is_public_envelope(row)]
+     if public_rows:
+         p.error(
+@@ -209,10 +150,6 @@ def main() -> int:
+         )
+     observations = observations_by_organisation(args.observations)
+     envelopes: list[dict] = []
+-=======
+-    observations = observations_by_organisation(args.observations)
+-    fat_envelopes: list[dict] = []
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+     claims_failed_orgs: list[str] = []
+     for row in rows:
+         organisation_number = str(
+@@ -225,7 +162,6 @@ def main() -> int:
+                 started_at=args.started_at,
+                 completed_at=args.completed_at,
+                 observations=observations.get(organisation_number, []),
+-<<<<<<< HEAD
+                 envelope_format=args.envelope_format,
+             )
+         except Exception as exc:
+@@ -278,70 +214,12 @@ def main() -> int:
+                 "status": "ok",
+                 "run_id": report_run_id,
+                 "terminal_status_counts": status_counts,
+-=======
+-            )
+-        except Exception as exc:
+-            # Stage 6 is batch-critical, but a malformed company must not prevent
+-            # usable envelopes for every other company.
+-            if row.get("profile") is not None and row.get("modules") is not None:
+-                envelope = copy.deepcopy(row)
+-                if args.run_id:
+-                    envelope["run_id"] = args.run_id
+-                if args.started_at:
+-                    envelope["started_at"] = args.started_at
+-                if args.completed_at:
+-                    envelope["completed_at"] = args.completed_at
+-                profile = copy.deepcopy(envelope.get("profile") or {})
+-            else:
+-                profile = copy.deepcopy(row.get("profile") or row)
+-                envelope = None
+-            if observations.get(organisation_number):
+-                profile["observations"] = observations[organisation_number]
+-            if envelope is None:
+-                modules = list((profile.get("evidence") or {}).keys())
+-                envelope = terminal_envelope(
+-                    profile,
+-                    run_id=args.run_id or str(row.get("run_id") or "run-v1"),
+-                    modules=modules,
+-                    started_at=args.started_at or str(row.get("started_at") or ""),
+-                    completed_at=args.completed_at or str(row.get("completed_at") or ""),
+-                )
+-            else:
+-                envelope["profile"] = profile
+-            envelope["claims"] = []
+-            envelope["evidence"] = []
+-            envelope["claims_error"] = f"{type(exc).__name__}: {str(exc)[:240]}"
+-            claims_failed_orgs.append(organisation_number)
+-        fat_envelopes.append(envelope)
+-
+-    output_path.parent.mkdir(parents=True, exist_ok=True)
+-    with output_path.open("w", encoding="utf-8") as handle:
+-        for row in fat_envelopes:
+-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+-
+-    report_path.parent.mkdir(parents=True, exist_ok=True)
+-    report_run_id = args.run_id or next(
+-        (str(row.get("run_id")) for row in fat_envelopes if row.get("run_id")),
+-        "run-v1",
+-    )
+-    report_path.write_text(
+-        json.dumps(
+-            {
+-                "rows": len(fat_envelopes),
+-                "status": "ok",
+-                "run_id": report_run_id,
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+                 "claims_failed": len(claims_failed_orgs),
+                 "claims_failed_orgs": claims_failed_orgs,
+             },
+             ensure_ascii=False,
+             indent=2,
+-<<<<<<< HEAD
+         ) + "\n",
+-=======
+-        ),
+-        encoding="utf-8",
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+     )
+     return 0
+ 
+diff --git a/scripts/run_agent.py b/scripts/run_agent.py
+index a923413..bce70c8 100644
+--- a/scripts/run_agent.py
++++ b/scripts/run_agent.py
+@@ -30,7 +30,6 @@ without them there is no submission at all.
+ from __future__ import annotations
+ 
+ import argparse
+-<<<<<<< HEAD
+ import hashlib
+ import json
+ import os
+@@ -39,14 +38,6 @@ import subprocess
+ import sys
+ import time
+ import uuid
+-=======
+-import json
+-import os
+-import shutil
+-import subprocess
+-import sys
+-import time
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+ from pathlib import Path
+ 
+ ROOT = Path(__file__).resolve().parent
+@@ -55,10 +46,7 @@ ARCHIVE_ROOT = PROJECT_ROOT / "archive" / "v2-crawler"
+ sys.path.insert(0, str(PROJECT_ROOT / "src"))
+ from norway_company_agent.env import load_local_env  # noqa: E402
+ from norway_company_agent.telemetry import aggregate_company_metrics, apply_discovery_report, build_metrics, read_events  # noqa: E402
+-<<<<<<< HEAD
+ from norway_company_agent.vocabulary import SCHEMA_VERSION  # noqa: E402
+-=======
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+ 
+ 
+ def run(cmd: list[str], *, optional: bool = False) -> bool:
+@@ -79,7 +67,6 @@ def read_jsonl(path: Path) -> list[dict]:
+     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+ 
+ 
+-<<<<<<< HEAD
+ def atomic_write_text(path: Path, value: str) -> None:
+     path.parent.mkdir(parents=True, exist_ok=True)
+     temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+@@ -183,13 +170,6 @@ def stage_output_paths(cmd: list[str]) -> list[Path]:
+         else:
+             index += 1
+     return result
+-=======
+-def write_jsonl(path: Path, rows: list[dict]) -> None:
+-    path.parent.mkdir(parents=True, exist_ok=True)
+-    with path.open("w", encoding="utf-8") as handle:
+-        for row in rows:
+-            handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+ 
+ 
+ def merge_profiles(base: list[dict], updated: list[dict], *, only_if_has: str | None = None) -> int:
+@@ -223,10 +203,6 @@ def main() -> None:
+     parser.add_argument("--output-dir", required=True)
+     parser.add_argument("--run-id", required=True)
+     parser.add_argument("--expected-count", type=int, required=True)
+-<<<<<<< HEAD
+-=======
+-    parser.add_argument("--overwrite", action="store_true", help="Replace existing output for this run ID")
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+     parser.add_argument("--discovery-limit", type=int, default=None, help="Cap discovery queries; default is expected-count")
+     parser.add_argument("--skip-deep-crawl", dest="skip_deep_crawl", action="store_true", default=False, help="Skip the scrapy multi-page crawl stage")
+     parser.add_argument("--include-deep-crawl", dest="skip_deep_crawl", action="store_false", help="Enable the crawler (default)")
+@@ -236,7 +212,6 @@ def main() -> None:
+     args = parser.parse_args()
+ 
+     load_local_env(PROJECT_ROOT)
+-<<<<<<< HEAD
+     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", args.run_id) or args.run_id in {".", ".."}:
+         parser.error("--run-id may contain only letters, digits, dot, underscore, and hyphen")
+     output_dir = Path(args.output_dir).resolve()
+@@ -251,36 +226,6 @@ def main() -> None:
+     os.environ["SIGNALPOST_OUTPUT_DIR"] = str(output_dir.resolve())
+     os.environ["SIGNALPOST_CRAWL_TRACE_PATH"] = str((output_dir / "crawl-trace.jsonl").resolve())
+     os.environ["SIGNALPOST_QUARANTINE_PATH"] = str((output_dir / "validation-quarantine.jsonl").resolve())
+-=======
+-    output_dir = Path(args.output_dir)
+-    request_log = output_dir / "request-log.jsonl"
+-    existing_output = output_dir.exists() and any(output_dir.iterdir())
+-    if existing_output and args.overwrite:
+-        print(f'Overwriting existing output for run_id "{args.run_id}" at {output_dir}.', file=sys.stderr)
+-        for child in output_dir.iterdir():
+-            if child.is_dir():
+-                shutil.rmtree(child)
+-            else:
+-                child.unlink()
+-    elif existing_output:
+-        original_output_dir = output_dir
+-        duplicate_index = 1
+-        while True:
+-            candidate = original_output_dir.parent / f"{original_output_dir.name}-duplicate-{duplicate_index}"
+-            if not candidate.exists():
+-                output_dir = candidate
+-                request_log = output_dir / "request-log.jsonl"
+-                print(
+-                    f'Run ID "{args.run_id}" already has output at {original_output_dir}; '
+-                    f"saving this duplicate run in {output_dir}.",
+-                    file=sys.stderr,
+-                )
+-                break
+-            duplicate_index += 1
+-    output_dir.mkdir(parents=True, exist_ok=True)
+-    os.environ["SIGNALPOST_REQUEST_LOG"] = str(request_log)
+-    os.environ["SIGNALPOST_SNAPSHOT_DIR"] = str((output_dir / "snapshots").resolve())
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+     os.environ["SIGNALPOST_RUN_ID"] = args.run_id
+     os.environ["SIGNALPOST_CALLER_MODULE"] = "run_agent"
+     discovery_limit = args.discovery_limit or args.expected_count
+@@ -291,7 +236,6 @@ def main() -> None:
+     discovery_reports: list[dict] = []   # Step 3: one entry per provider that ran
+ 
+     def run_stage(name: str, cmd: list[str], *, optional: bool = False) -> bool:
+-<<<<<<< HEAD
+         marker_dir = output_dir / "stages"
+         marker_dir.mkdir(parents=True, exist_ok=True)
+         marker_name = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-_") or "stage"
+@@ -347,25 +291,6 @@ def main() -> None:
+     # locations, single-page website. Required. Keep this artifact immutable so
+     # later merged profiles cannot invalidate the registry-stage marker.
+     profiles_path = output_dir / "profiles-stage1.jsonl"
+-=======
+-        (output_dir / "progress-stage.txt").write_text(name + "\n", encoding="utf-8")
+-        stage_started = time.monotonic()
+-        stage_started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+-        ok = run(cmd, optional=optional)
+-        stage_metrics.append({
+-            "stage": name,
+-            "started_at": stage_started_at,
+-            "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+-            "duration_ms": int((time.monotonic() - stage_started) * 1000),
+-            "requests": 0,
+-            "errors": 0,
+-        })
+-        return ok
+-
+-    # 1. Registry batch: identity, financials, financial_history, roles, group,
+-    # locations, single-page website. Required.
+-    profiles_path = output_dir / "profiles.jsonl"
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+     run_stage("registry", [
+         args.python, str(ROOT / "run_competition_batch.py"),
+         "--organisations", args.organisations,
+@@ -386,11 +311,7 @@ def main() -> None:
+             continue
+         discovered_path = output_dir / f"profiles-with-{name}.jsonl"
+         discovery_report_path = output_dir / f"{name}-discovery-report.json"
+-<<<<<<< HEAD
+         ok = run_stage(f"{name}_discovery", [
+-=======
+-        ok = run_stage("discovery", [
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+             args.python, str(ARCHIVE_ROOT / script),
+             "--input", str(profiles_path),
+             "--output", str(discovered_path),
+@@ -433,23 +354,14 @@ def main() -> None:
+     if has_scrapy:
+         crawl_input = output_dir / "crawl-input.jsonl"
+         write_jsonl(crawl_input, [row for row in profiles if row.get("website")])
+-<<<<<<< HEAD
+         crawl_jobdir = crawl_jobdir_root / path_sha256(crawl_input)
+         crawled_path = output_dir / "profiles-crawled.jsonl"
+         ok = run_stage("deep_crawl", [
+-=======
+-        crawled_path = output_dir / "profiles-crawled.jsonl"
+-        ok = run_stage("crawling", [
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+             args.python, str(ARCHIVE_ROOT / "run_scrapy_websites.py"),
+             "--input", str(crawl_input),
+             "--output", str(crawled_path),
+             "--events", str(output_dir / "crawl-events.jsonl"),
+-<<<<<<< HEAD
+             "--jobdir", str(crawl_jobdir),
+-=======
+-            "--jobdir", str(output_dir / "crawl-jobdir"),
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+             "--report", str(output_dir / "crawl-report.json"),
+             "--forensics", str(output_dir / "website-forensics.jsonl"),
+         ], optional=True)
+@@ -461,15 +373,9 @@ def main() -> None:
+ 
+             # 4. Activity/news extraction from the deepened crawl. Pure Python,
+             # always attempted once there's a crawl to extract from.
+-<<<<<<< HEAD
+             run_stage("site_activity", [args.python, str(ARCHIVE_ROOT / "extract_company_site_activity.py"), "--profiles", str(profiles_path), "--output", str(activity_obs_path), "--report", str(output_dir / "activity-report.json")], optional=True)
+             run_stage("site_news", [args.python, str(ARCHIVE_ROOT / "extract_company_site_news.py"), "--profiles", str(profiles_path), "--output", str(news_obs_path), "--report", str(output_dir / "news-report.json")], optional=True)
+             run_stage("site_careers", [args.python, str(ARCHIVE_ROOT / "extract_company_site_careers.py"), "--profiles", str(profiles_path), "--output", str(careers_obs_path), "--report", str(output_dir / "careers-report.json")], optional=True)
+-=======
+-            run_stage("claims/evidence", [args.python, str(ARCHIVE_ROOT / "extract_company_site_activity.py"), "--profiles", str(profiles_path), "--output", str(activity_obs_path), "--report", str(output_dir / "activity-report.json")], optional=True)
+-            run_stage("claims/evidence", [args.python, str(ARCHIVE_ROOT / "extract_company_site_news.py"), "--profiles", str(profiles_path), "--output", str(news_obs_path), "--report", str(output_dir / "news-report.json")], optional=True)
+-            run_stage("claims/evidence", [args.python, str(ARCHIVE_ROOT / "extract_company_site_careers.py"), "--profiles", str(profiles_path), "--output", str(careers_obs_path), "--report", str(output_dir / "careers-report.json")], optional=True)
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+             if activity_obs_path.exists():
+                 stages_run.append("site_activity")
+             if news_obs_path.exists():
+@@ -486,22 +392,13 @@ def main() -> None:
+     workforce_obs_path = output_dir / "workforce-observations.jsonl"
+     if not args.skip_workforce_ocr:
+         orgs_path = output_dir / "all-orgs.txt"
+-<<<<<<< HEAD
+         atomic_write_text(orgs_path, "\n".join(row["organisation_number"] for row in profiles))
+         ok = run_stage("workforce_ocr", [
+-=======
+-        orgs_path.write_text("\n".join(row["organisation_number"] for row in profiles), encoding="utf-8")
+-        ok = run([
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+             args.python, str(ARCHIVE_ROOT / "run_annual_report_workforce_connector.py"),
+             "--profiles", str(profiles_path),
+             "--organisations", str(orgs_path),
+             "--output", str(workforce_obs_path),
+-<<<<<<< HEAD
+             "--cache", str(workforce_cache_dir),
+-=======
+-            "--cache", str(output_dir / "workforce-cache"),
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+             "--report", str(output_dir / "workforce-report.json"),
+         ], optional=True)
+         if ok:
+@@ -511,14 +408,8 @@ def main() -> None:
+     # annual-report OCR cache the workforce stage just populated -- no new
+     # downloads or OCR, so this only runs if that cache exists.
+     prior_year_obs_path = output_dir / "prior-year-financials-observations.jsonl"
+-<<<<<<< HEAD
+     if not args.skip_workforce_ocr and workforce_cache_dir.exists():
+         ok = run_stage("prior_year_financials", [
+-=======
+-    workforce_cache_dir = output_dir / "workforce-cache"
+-    if not args.skip_workforce_ocr and workforce_cache_dir.exists():
+-        ok = run([
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+             args.python, str(ARCHIVE_ROOT / "extract_prior_year_financials.py"),
+             "--profiles", str(profiles_path),
+             "--cache", str(workforce_cache_dir),
+@@ -544,7 +435,6 @@ def main() -> None:
+     for obs_path in (activity_obs_path, news_obs_path, careers_obs_path, workforce_obs_path, prior_year_obs_path):
+         if obs_path.exists():
+             convert_cmd += ["--observations", str(obs_path)]
+-<<<<<<< HEAD
+     run_stage("claims_conversion", convert_cmd)
+     stages_run.append("claims_conversion")
+ 
+@@ -563,43 +453,16 @@ def main() -> None:
+ 
+     summary = {
+         "schema_version": SCHEMA_VERSION,
+-=======
+-    run_stage("claims/evidence", convert_cmd)
+-    stages_run.append("claims_conversion")
+-
+-    # 7. Offline HTML viewer -- best-effort, never blocks the submission artifact.
+-    viewer_builder = ROOT / "build_viewer.py"
+-    if viewer_builder.exists():
+-        viewer_path = output_dir / "viewer.html"
+-        ok = run_stage("output", [
+-            args.python, str(viewer_builder),
+-            "--envelopes", str(envelopes_path),
+-            "--profiles", str(profiles_path),
+-            "--output", str(viewer_path),
+-        ], optional=True)
+-        if ok:
+-            stages_run.append("viewer")
+-    else:
+-        print("Offline viewer builder not found -- skipping viewer.", file=sys.stderr)
+-
+-    summary = {
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+         "run_id": args.run_id,
+         "started_at": started_at,
+         "completed_at": completed_at,
+         "stages_run": stages_run,
+         "profiles": str(profiles_path),
+         "envelopes": str(envelopes_path),
+-<<<<<<< HEAD
+         "validation_report": str(validation_report_path),
+         "metrics": str(output_dir / "run-metrics.json"),
+     }
+     atomic_write_json(output_dir / "run-summary.json", summary)
+-=======
+-        "metrics": str(output_dir / "run-metrics.json"),
+-    }
+-    (output_dir / "run-summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+     completed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+     all_events = read_events(request_log)
+     foreign_run_ids = sorted({str(event.get("run_id")) for event in all_events if event.get("run_id") != args.run_id})
+@@ -618,12 +481,8 @@ def main() -> None:
+         apply_discovery_report(companies, discovery_report)
+     metrics = build_metrics(events=events, run_id=args.run_id, input_file=args.organisations, input_count=args.expected_count, started_at=started_at, completed_at=completed_at, duration_ms=int((time.monotonic() - started_monotonic) * 1000), stage_metrics=stage_metrics, per_company=companies, command=sys.argv, discovery_reports=discovery_reports)
+     metrics["stages"] = [{**stage, "requests": sum(1 for event in events if event.get("timestamp", "") >= stage["started_at"] and event.get("timestamp", "") <= stage["completed_at"]), "errors": sum(1 for event in events if not event.get("success") and event.get("timestamp", "") >= stage["started_at"] and event.get("timestamp", "") <= stage["completed_at"])} for stage in stage_metrics]
+-<<<<<<< HEAD
+     metrics["schema_version"] = SCHEMA_VERSION
+     atomic_write_json(output_dir / "run-metrics.json", metrics)
+-=======
+-    (output_dir / "run-metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+     print(json.dumps(summary, indent=2))
+ 
+ 
+diff --git a/scripts/run_competition_batch.py b/scripts/run_competition_batch.py
+index 17befea..ebd5aa2 100644
+--- a/scripts/run_competition_batch.py
++++ b/scripts/run_competition_batch.py
+@@ -18,15 +18,10 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
+ from norway_company_agent.batch import (  # noqa: E402
+     backfill_from_registry_live,
+     profiles_from_inputs,
+-<<<<<<< HEAD
+     read_organisation_inputs,
+     terminal_envelope,
+ )
+ from norway_company_agent.vocabulary import SCHEMA_VERSION, batch_state  # noqa: E402
+-=======
+-    terminal_envelope,
+-)
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+ from norway_company_agent.identity import apply_website_identity_gate  # noqa: E402
+ from norway_company_agent.official import (  # noqa: E402
+     accounting_obligation_assessment,
+@@ -38,7 +33,6 @@ from norway_company_agent.website import fetch_website  # noqa: E402
+ 
+ 
+ class ProgressTracker:
+-<<<<<<< HEAD
+     def __init__(self, path: Path, total: int, already_completed: list[dict] | None = None):
+         self.path = path
+         self.lock = threading.Lock()
+@@ -61,24 +55,6 @@ class ProgressTracker:
+             "last_progress_at": now,
+             "root_error": None,
+             "failed_orgs": failed_orgs,
+-=======
+-    def __init__(self, path: Path, total: int):
+-        self.path = path
+-        self.lock = threading.Lock()
+-        now = time.time()
+-        self.state = {
+-            "total": total,
+-            "started": 0,
+-            "completed": 0,
+-            "successful": 0,
+-            "failed": 0,
+-            "active": 0,
+-            "last_company": None,
+-            "last_completed_company": None,
+-            "last_progress_at": now,
+-            "root_error": None,
+-            "failed_orgs": [],
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+             "total_retries": 0,
+         }
+         self._write_locked()
+@@ -164,7 +140,6 @@ class CompanyTimingTracker:
+         print(f"SLOWEST company: {slowest[0]} | {slowest[1]:.1f} sec", flush=True)
+ 
+ 
+-<<<<<<< HEAD
+ class ProfileCheckpoint:
+     """Append-only, fsync-backed checkpoint for each completed company."""
+ 
+@@ -297,35 +272,6 @@ def retry_source_error_modules(profile: dict, modules: set[str], *, max_retries:
+         if not unresolved:
+             profile["_batch_state"] = "ok"
+             profile.pop("_batch_error", None)
+-=======
+-def read_orgs(path: Path) -> list[str]:
+-    text = path.read_text(encoding="utf-8")
+-    stripped = text.lstrip()
+-    if path.suffix.lower() == ".json" or stripped.startswith("["):
+-        data = json.loads(text)
+-        if isinstance(data, list):
+-            return [str(item) for item in data]
+-        if isinstance(data, dict):
+-            return [str(v) for v in data.values()]
+-        return []
+-
+-    rows = []
+-    for line in path.read_text(encoding="utf-8").splitlines():
+-        line = line.strip()
+-        if not line:
+-            continue
+-        if line.startswith("{"):
+-            try:
+-                row = json.loads(line)
+-                org = row.get("organisation_number") or row.get("org") or row.get("id")
+-                if org:
+-                    rows.append(str(org))
+-            except json.JSONDecodeError:
+-                pass
+-        else:
+-            rows.append(line)
+-    return rows
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+ 
+ 
+ def _build_failure_profile(organisation_number: str, modules: set[str], error_message: str) -> dict:
+@@ -399,7 +345,6 @@ def collect_profile(
+             website_record, _ = fetch_website(profile.get("website"), organisation_number=organisation_number)
+             gated = apply_website_identity_gate(profile, website_record)
+             evidence["website"] = gated["website"]
+-<<<<<<< HEAD
+         retry_source_error_modules(profile, modules)
+         # _batch_state is derived from terminal_status: failed iff a required module is source_error.
+         profile["_batch_state"] = batch_state(profile)
+@@ -409,11 +354,6 @@ def collect_profile(
+                 RuntimeError(profile.get("_batch_error") or "one or more modules remain in source_error")
+                 if profile.get("_batch_state") == "failed" else None,
+             )
+-=======
+-        profile["_batch_state"] = "ok"
+-        if progress:
+-            progress.finished_company(organisation_number)
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+         duration = time.perf_counter() - started
+         print(
+             f"[{datetime.now().strftime('%H:%M:%S')}] END company {organisation_number} | {duration:.1f} sec | SUCCESS",
+@@ -431,11 +371,6 @@ def collect_profile(
+         )
+         if timings:
+             timings.record(organisation_number, duration)
+-<<<<<<< HEAD
+-=======
+-        if progress:
+-            progress.finished_company(organisation_number, exc)
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+         profile["_batch_state"] = "failed"
+         profile["_batch_error"] = error[:500]
+         # Build out missing evidence modules so terminal_envelope produces a valid (failed) envelope
+@@ -471,7 +406,6 @@ def collect_profile(
+                 note="collection_exception",
+                 source_row_key=organisation_number,
+             )
+-<<<<<<< HEAD
+         retry_source_error_modules(profile, modules)
+         profile["_batch_state"] = batch_state(profile)
+         if profile["_batch_state"] == "ok":
+@@ -482,8 +416,6 @@ def collect_profile(
+                 RuntimeError(profile.get("_batch_error") or "one or more modules remain in source_error")
+                 if profile.get("_batch_state") == "failed" else None,
+             )
+-=======
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+         return profile
+ 
+ 
+@@ -500,7 +432,6 @@ def main() -> int:
+     args = p.parse_args()
+ 
+     org_file = Path(args.organisations)
+-<<<<<<< HEAD
+     try:
+         organisation_records = read_organisation_inputs(org_file)
+     except (OSError, ValueError) as exc:
+@@ -546,22 +477,6 @@ def main() -> int:
+                 org = str(profile["organisation_number"])
+                 try:
+                     row = future.result()
+-=======
+-    orgs = read_orgs(org_file)
+-    profiles = profiles_from_inputs([{"organisation_number": org} for org in orgs])
+-    modules = {module.strip() for module in args.modules.split(",") if module.strip()}
+-    progress = ProgressTracker(args.progress_file, len(profiles)) if args.progress_file else None
+-    timings = CompanyTimingTracker()
+-
+-    collected: list[dict] = []
+-    try:
+-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(12, max(1, len(profiles)))) as executor:
+-            futures = [executor.submit(collect_profile, profile, modules, progress, timings) for profile in profiles]
+-            for profile, future in zip(profiles, futures):
+-                org = str(profile["organisation_number"])
+-                try:
+-                    collected.append(future.result())
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+                 except Exception as exc:
+                     error = f"{type(exc).__name__}: {exc}".replace("\r", " ").replace("\n", " ")
+                     print(
+@@ -570,7 +485,6 @@ def main() -> int:
+                     )
+                     if timings:
+                         timings.record(org, 0.0)
+-<<<<<<< HEAD
+                     recovered = _build_failure_profile(org, modules, error)
+                     if progress:
+                         progress.finished_company(org, exc)
+@@ -586,15 +500,6 @@ def main() -> int:
+         for profile in profiles
+     ]
+ 
+-=======
+-                    if progress:
+-                        progress.finished_company(org, exc)
+-                    recovered = _build_failure_profile(org, modules, error)
+-                    collected.append(recovered)
+-    finally:
+-        timings.print_summary()
+-
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+     # Count retries from the request log if available
+     total_retries = 0
+     try:
+@@ -615,37 +520,19 @@ def main() -> int:
+     if progress:
+         progress.add_retries(total_retries)
+ 
+-<<<<<<< HEAD
+     atomic_write_jsonl(Path(args.profiles_output), collected)
+-=======
+-    Path(args.profiles_output).parent.mkdir(parents=True, exist_ok=True)
+-    with open(args.profiles_output, "w", encoding="utf-8") as handle:
+-        for row in collected:
+-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+ 
+     envelope_rows = [
+         terminal_envelope(
+             row,
+             run_id=args.run_id,
+-<<<<<<< HEAD
+-=======
+-            modules=row.get("evidence", {}).keys(),
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+             started_at="",
+             completed_at="",
+         )
+         for row in collected
+     ]
+ 
+-<<<<<<< HEAD
+     atomic_write_jsonl(Path(args.output), envelope_rows)
+-=======
+-    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+-    with open(args.output, "w", encoding="utf-8") as handle:
+-        for row in envelope_rows:
+-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+ 
+     # Compute failed orgs via profile _batch_state (authoritative: pipeline crashed vs completed cleanly)
+     expected = args.expected_count or len(collected)
+@@ -693,19 +580,12 @@ def main() -> int:
+     if progress and not failed_orgs:
+         progress_failed = progress.state.get("failed") or 0
+         if progress_failed:
+-<<<<<<< HEAD
+             print(f"  (progress-tracker failed: {progress_failed}; envelopes carry terminal_status, not a failed flag)", flush=True)
+-=======
+-            print(f"  (progress-tracker failed: {progress_failed}; envelopes still marked complete)", flush=True)
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+     print("=" * 60, flush=True)
+     print("", flush=True)
+ 
+     report = {
+-<<<<<<< HEAD
+         "schema_version": SCHEMA_VERSION,
+-=======
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+         "run_id": args.run_id,
+         "expected_count": expected,
+         "profiles_written": len(collected),
+diff --git a/src/norway_company_agent/batch.py b/src/norway_company_agent/batch.py
+index acf0aad..3720bc9 100644
+--- a/src/norway_company_agent/batch.py
++++ b/src/norway_company_agent/batch.py
+@@ -5,7 +5,6 @@ from pathlib import Path
+ from typing import Any, Iterable
+ 
+ from .evidence import evidence, utc_now
+-<<<<<<< HEAD
+ from .vocabulary import (
+     SCHEMA_VERSION,
+     TERMINAL_STATUSES,
+@@ -13,27 +12,12 @@ from .vocabulary import (
+     invalid_module_states,
+     module_states,
+ )
+-=======
+-
+-
+-TERMINAL_STATES = {
+-    "complete",
+-    "not_applicable",
+-    "not_found",
+-    "blocked_policy",
+-    "blocked_robots",
+-    "source_error",
+-    "budget_exhausted",
+-    "submission_error",
+-}
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+ 
+ 
+ def read_organisation_inputs(path: str | Path) -> list[dict[str, Any]]:
+     source = Path(path)
+     text = source.read_text(encoding="utf-8")
+     values: list[Any]
+-<<<<<<< HEAD
+     # Some existing inputs use a .jsonl filename but contain one JSON array.
+     # Detect that by content so the shared validator accepts the current default.
+     if source.suffix.lower() == ".json" or text.lstrip().startswith("["):
+@@ -47,12 +31,6 @@ def read_organisation_inputs(path: str | Path) -> list[dict[str, Any]]:
+         if not isinstance(values, list):
+             raise ValueError("'organisation_numbers' must be a JSON array")
+     elif source.suffix.lower() == ".jsonl":
+-=======
+-    if source.suffix == ".json":
+-        body = json.loads(text)
+-        values = body if isinstance(body, list) else body.get("organisation_numbers", [])
+-    elif source.suffix == ".jsonl":
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+         values = [json.loads(line) for line in text.splitlines() if line.strip()]
+     else:
+         values = [line.strip() for line in text.splitlines() if line.strip()]
+@@ -139,32 +117,10 @@ def backfill_from_registry_live(profile: dict[str, Any]) -> dict[str, Any]:
+     return profile
+ 
+ 
+-<<<<<<< HEAD
+-=======
+-def evidence_terminal_state(record: dict[str, Any] | None) -> str:
+-    if not record:
+-        return "submission_error"
+-    status = record.get("status")
+-    if status == "available":
+-        return "complete"
+-    if status == "not_applicable":
+-        return "not_applicable"
+-    if status == "not_found":
+-        return "not_found"
+-    if status == "blocked":
+-        note = str(record.get("note") or "").casefold()
+-        return "blocked_robots" if "robot" in note else "blocked_policy"
+-    if status == "source_error":
+-        return "source_error"
+-    return "submission_error"
+-
+-
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+ def terminal_envelope(
+     profile: dict[str, Any],
+     *,
+     run_id: str,
+-<<<<<<< HEAD
+     started_at: str,
+     completed_at: str,
+ ) -> dict[str, Any]:
+@@ -181,34 +137,11 @@ def terminal_envelope(
+         "started_at": started_at,
+         "completed_at": completed_at,
+         "modules": states,
+-=======
+-    modules: Iterable[str],
+-    started_at: str,
+-    completed_at: str,
+-) -> dict[str, Any]:
+-    module_states = {}
+-    for module in modules:
+-        record = profile.get("evidence", {}).get(module)
+-        module_states[module] = {
+-            "state": evidence_terminal_state(record),
+-            "retry_count": int((record or {}).get("retry_count") or 0),
+-            "final_timestamp": (record or {}).get("retrieved_at") or completed_at,
+-        }
+-    entity_state = "submission_error" if any(item["state"] == "submission_error" for item in module_states.values()) else "complete"
+-    return {
+-        "run_id": run_id,
+-        "organisation_number": profile["organisation_number"],
+-        "state": entity_state,
+-        "started_at": started_at,
+-        "completed_at": completed_at,
+-        "modules": module_states,
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+         "profile": profile,
+     }
+ 
+ 
+ def validate_envelopes(envelopes: list[dict[str, Any]], expected_count: int) -> dict[str, Any]:
+-<<<<<<< HEAD
+     """Count/vocabulary check that works on both fat and public envelopes."""
+     orgs = [item.get("organisation_number") for item in envelopes]
+ 
+@@ -219,25 +152,12 @@ def validate_envelopes(envelopes: list[dict[str, Any]], expected_count: int) ->
+         {"organisation_number": item.get("organisation_number"), "problem": problem}
+         for item in envelopes
+         for problem in invalid_module_states(item.get("modules") or {})
+-=======
+-    orgs = [item.get("organisation_number") for item in envelopes]
+-    invalid_states = [
+-        {"organisation_number": item.get("organisation_number"), "state": state.get("state")}
+-        for item in envelopes
+-        for state in item.get("modules", {}).values()
+-        if state.get("state") not in TERMINAL_STATES
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+     ]
+     checks = {
+         "exact_expected_count": len(envelopes) == expected_count,
+         "unique_organisation_numbers": len(orgs) == len(set(orgs)),
+-<<<<<<< HEAD
+         "all_terminal_statuses_valid": all(status_of(item) in TERMINAL_STATUSES for item in envelopes),
+         "all_module_states_valid": not invalid_states,
+-=======
+-        "all_entity_states_terminal": all(item.get("state") in TERMINAL_STATES for item in envelopes),
+-        "all_module_states_terminal": not invalid_states,
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+         "zero_silent_drops": len(envelopes) == expected_count and len(orgs) == len(set(orgs)),
+     }
+     return {"passed": all(checks.values()), "checks": checks, "invalid_states": invalid_states}
+diff --git a/src/norway_company_agent/output_contract.py b/src/norway_company_agent/output_contract.py
+index bb953f6..5572163 100644
+--- a/src/norway_company_agent/output_contract.py
++++ b/src/norway_company_agent/output_contract.py
+@@ -3,10 +3,7 @@ from __future__ import annotations
+ from typing import Any
+ 
+ from .changes import diff_claims
+-<<<<<<< HEAD
+ from .vocabulary import MODULE_KEYS, SCHEMA_VERSION, derive_terminal_status, module_states
+-=======
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+ from .website import normalize_website_value
+ 
+ 
+@@ -132,7 +129,6 @@ def assert_claim_schema_integrity(envelope: dict[str, Any]) -> None:
+                 f"({type(claim['value']).__name__}) — failed/blocked claims must have value=None"
+             )
+ 
+-<<<<<<< HEAD
+         # 8. not_available means no data exists; a confidence score for it is meaningless.
+         if avail == "not_available" and claim.get("confidence") is not None:
+             violations.append(
+@@ -140,8 +136,6 @@ def assert_claim_schema_integrity(envelope: dict[str, Any]) -> None:
+                 f"got {claim.get('confidence')}"
+             )
+ 
+-=======
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+     if violations:
+         raise ClaimSchemaError(
+             f"Claim schema integrity check failed ({len(violations)} violation(s)):\n"
+@@ -181,7 +175,6 @@ OBSERVATION_CLAIM_FIELDS = {
+     "prior_year_financials": "prior_year_financials",
+ }
+ 
+-<<<<<<< HEAD
+ CONTACT_CLAIM_FIELDS = ("phones", "emails", "website_addresses", "social_profiles")
+ 
+ # Every envelope carries exactly these claims, in this order. A field with no data
+@@ -202,8 +195,6 @@ PUBLIC_RUN_KEYS = ("run_id", "started_at", "completed_at", "terminal_status")
+ # Evidence carries provenance only. Values live in claims, nowhere else.
+ PUBLIC_EVIDENCE_KEYS = ("id", "source_url", "source_class", "retrieved_at", "content_sha256", "claim_span")
+ 
+-=======
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+ 
+ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = None, previous_envelope: dict[str, Any] | None = None) -> dict[str, Any]:
+     profile = row.get("profile") if isinstance(row.get("profile"), dict) else row
+@@ -213,10 +204,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+     evidence_items: list[dict[str, Any]] = []
+     errors: list[dict[str, str]] = []
+     evidence_ids: dict[str, str] = {}
+-<<<<<<< HEAD
+     seen_observation_fields: set[str] = set()
+-=======
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+ 
+     def add_evidence(
+         key: str,
+@@ -224,18 +212,10 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+         *,
+         claim_span: str,
+         availability: str,
+-<<<<<<< HEAD
+     ) -> str:
+         if key in evidence_ids:
+             return evidence_ids[key]
+         item_id = f"ev-{organisation_number}-{len(evidence_items)}"
+-=======
+-        value: Any = None,
+-    ) -> str:
+-        if key in evidence_ids:
+-            return evidence_ids[key]
+-        item_id = f"ev-{len(evidence_items) + 1}"
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+         evidence_ids[key] = item_id
+         source_class = str(record.get("source_class") or record.get("source_type") or "unknown")
+         if source_class in {"registry_linked_company_website", "company_site"}:
+@@ -245,22 +225,12 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+             "source_url": str(record.get("source_url") or ""),
+             "source_class": source_class,
+             "retrieved_at": str(record.get("retrieved_at") or ""),
+-<<<<<<< HEAD
+             "content_sha256": record.get("content_sha256") or None,
+             "claim_span": claim_span[:400],
+             # Internal only: read by the integrity assertions, stripped before output.
+             "module": str(record.get("field") or key),
+             "status": availability,
+         }
+-=======
+-            "content_sha256": record.get("content_sha256") or "",
+-            "claim_span": claim_span[:400],
+-            "module": str(record.get("field") or key),
+-            "status": availability,
+-        }
+-        if value is not None:
+-            item["value"] = value
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+         evidence_items.append(item)
+         return item_id
+ 
+@@ -272,11 +242,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+             registry_span = _claim_span(profile, registry)
+             registry_id = add_evidence(
+                 "registry_live", registry, claim_span=registry_span,
+-<<<<<<< HEAD
+                 availability=availability,
+-=======
+-                availability=availability, value=registry.get("value"),
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+             )
+             for field, path in REGISTRY_CLAIM_FIELDS:
+                 claims.append(_claim(
+@@ -286,11 +252,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+             _append_error(errors, "registry_live", registry, availability)
+ 
+     website_record = records.get("website") if isinstance(records.get("website"), dict) else None
+-<<<<<<< HEAD
+     website_claim, website_error, _ = _website_claim(registry_value, website_record)
+-=======
+-    website_claim, website_error, website_evidence_value = _website_claim(registry_value, website_record)
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+     if website_claim:
+         website_evidence = website_record or registry
+         if website_evidence:
+@@ -300,10 +262,6 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+                 website_evidence,
+                 claim_span=_claim_span(profile, website_evidence),
+                 availability=website_availability,
+-<<<<<<< HEAD
+-=======
+-                value=website_evidence_value,
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+             )
+             website_claim["evidence_ids"] = [website_id]
+         claims.append(website_claim)
+@@ -329,11 +287,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+         value = record.get("value") if availability in {"available", "not_available"} else None
+         evidence_id = add_evidence(
+             field, record, claim_span=_claim_span(profile, record),
+-<<<<<<< HEAD
+             availability=availability,
+-=======
+-            availability=availability, value=value,
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+         )
+         claims.append(_claim(field, value, availability, _confidence(availability, official=True), [evidence_id]))
+         _append_error(errors, field, record, availability)
+@@ -343,14 +297,9 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+             continue
+         signal = str(observation.get("signal_type") or observation.get("field") or "")
+         field = OBSERVATION_CLAIM_FIELDS.get(signal)
+-<<<<<<< HEAD
+         if not field or field in seen_observation_fields:
+             continue
+         seen_observation_fields.add(field)
+-=======
+-        if not field:
+-            continue
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+         value = observation.get("metrics")
+         availability = _observation_availability(field, value)
+         record = {
+@@ -367,36 +316,12 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+             record,
+             claim_span=str(observation.get("evidence_span") or _claim_span(profile, record)),
+             availability=availability,
+-<<<<<<< HEAD
+         )
+         claims.append(_claim(field, value, availability, _confidence(availability), [evidence_id]))
+ 
+     claims = _complete_claims(claims)
+     modules = module_states(profile)
+     ops = _operations(metrics, profile)
+-=======
+-            value=value,
+-        )
+-        claims.append(_claim(field, value, availability, _confidence(availability), [evidence_id]))
+-
+-    # Build the operations block.  When telemetry metrics are supplied by the
+-    # caller (e.g. from run_agent.py), use them for requests/runtime.  When
+-    # they are not (e.g. build_output_contract.py path), derive what we can
+-    # from the row's modules dict and evidence records.
+-    if metrics:
+-        ops = _operations(metrics)
+-        # Supplement with module-level detail derived from the row when present.
+-        row_ops = _derive_operations_from_row(row, profile)
+-        for key in ("successful_modules", "failed_modules", "not_found_modules",
+-                    "pages_crawled", "pages_failed", "retried_module_attempts"):
+-            if key in row_ops:
+-                ops.setdefault(key, row_ops[key])
+-        # Use derived cost when telemetry doesn't carry it.
+-        if not ops.get("third_party_cost_usd"):
+-            ops["third_party_cost_usd"] = row_ops.get("third_party_cost_usd", 0)
+-    else:
+-        ops = _derive_operations_from_row(row, profile)
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+ 
+     # Compute changes[] by comparing current normalized claims against the
+     # previous envelope's normalized claims.  When no previous envelope is
+@@ -416,23 +341,15 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+         computed_changes = []
+ 
+     envelope = {
+-<<<<<<< HEAD
+         "schema_version": SCHEMA_VERSION,
+-=======
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+         "organisation_number": organisation_number,
+         "run": {
+             "run_id": str(row.get("run_id") or ""),
+             "started_at": str(row.get("started_at") or ""),
+             "completed_at": str(row.get("completed_at") or ""),
+-<<<<<<< HEAD
+             "terminal_status": derive_terminal_status(modules),
+         },
+         "modules": modules,
+-=======
+-            "terminal_status": _terminal_status(row),
+-        },
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+         "claims": claims,
+         "evidence": evidence_items,
+         "changes": computed_changes,
+@@ -441,7 +358,6 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+     }
+     assert_evidence_integrity(envelope)
+     assert_claim_schema_integrity(envelope)
+-<<<<<<< HEAD
+     envelope["evidence"] = [{key: item[key] for key in PUBLIC_EVIDENCE_KEYS} for item in evidence_items]
+     return envelope
+ 
+@@ -496,11 +412,6 @@ def conversion_failure_envelope(row: dict[str, Any], error: Exception) -> dict[s
+     }
+ 
+ 
+-=======
+-    return envelope
+-
+-
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+ def _availability(record: dict[str, Any], *, field: str | None = None) -> str | None:
+     status = record.get("status")
+     if status == "not_fetched":
+@@ -551,11 +462,7 @@ def _website_claim(
+     if registered_site:
+         return _claim("official_website", registered_site, "available", 0.99, []), None, registry_value
+     if registry_value:
+-<<<<<<< HEAD
+         return _claim("official_website", None, "not_available", None, []), None, registry_value
+-=======
+-        return _claim("official_website", None, "not_available", 0.8, []), None, registry_value
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+     return None, None, None
+ 
+ 
+@@ -590,11 +497,7 @@ def _claim(
+     field: str,
+     value: Any,
+     availability: str,
+-<<<<<<< HEAD
+     confidence: float | None,
+-=======
+-    confidence: float,
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+     evidence_ids: list[str],
+ ) -> dict[str, Any]:
+     if availability not in ALLOWED_AVAILABILITY:
+@@ -630,11 +533,7 @@ def _claim_span(profile: dict[str, Any], record: dict[str, Any]) -> str:
+     return ". ".join(parts)[:400]
+ 
+ 
+-<<<<<<< HEAD
+ def _confidence(availability: str, *, identity_score: Any = None, official: bool = False) -> float | None:
+-=======
+-def _confidence(availability: str, *, identity_score: Any = None, official: bool = False) -> float:
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+     if availability == "failed":
+         return 0.0
+     if availability == "ambiguous":
+@@ -647,12 +546,8 @@ def _confidence(availability: str, *, identity_score: Any = None, official: bool
+     if availability == "not_applicable":
+         return 1.0
+     if availability == "not_available":
+-<<<<<<< HEAD
+         # No data exists, so there is nothing to be confident about.
+         return None
+-=======
+-        return 0.8
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+     if official:
+         return 0.99
+     try:
+@@ -672,7 +567,6 @@ def _nested_get(value: dict[str, Any], path: str | tuple[str, ...]) -> Any:
+     return current
+ 
+ 
+-<<<<<<< HEAD
+ def _operations(metrics: dict[str, Any] | None, profile: dict[str, Any]) -> dict[str, Any]:
+     """requests / runtime_ms / third_party_cost_usd, always the same three keys.
+ 
+@@ -683,34 +577,12 @@ def _operations(metrics: dict[str, Any] | None, profile: dict[str, Any]) -> dict
+     cost = _third_party_cost(profile)
+     if not metrics:
+         return {"requests": 0, "runtime_ms": 0, "third_party_cost_usd": cost}
+-=======
+-def _terminal_status(row: dict[str, Any]) -> str:
+-    state = str(row.get("state") or "")
+-    if state == "complete":
+-        return "completed"
+-    if state.startswith("blocked"):
+-        return "blocked"
+-    return "failed" if state else "completed"
+-
+-
+-def _operations(metrics: dict[str, Any] | None) -> dict[str, Any]:
+-    """Build the operations block from telemetry metrics when available.
+-
+-    When telemetry metrics are passed (from aggregate_company_metrics in
+-    telemetry.py) the three core fields are populated from them.  When not,
+-    the caller is expected to have already called _derive_operations_from_row()
+-    and passed its result here via the metrics parameter.
+-    """
+-    if not metrics:
+-        return {"requests": 0, "runtime_ms": 0, "third_party_cost_usd": 0}
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+     runtime = int(metrics.get("wall_clock_duration_ms") or 0)
+     if runtime <= 0:
+         runtime = int(metrics.get("sum_request_duration_ms") or metrics.get("duration_ms") or 0)
+     return {
+         "requests": int(metrics.get("api_request_count") or 0),
+         "runtime_ms": runtime,
+-<<<<<<< HEAD
+         "third_party_cost_usd": float(metrics.get("third_party_cost_usd") or 0) or cost,
+     }
+ 
+@@ -729,110 +601,6 @@ def _third_party_cost(profile: dict[str, Any]) -> float:
+         except (TypeError, ValueError):
+             pass
+     return round(total, 6)
+-=======
+-        "third_party_cost_usd": float(metrics.get("third_party_cost_usd") or 0),
+-    }
+-
+-
+-# Module states that map to "completed successfully" (clean terminal states).
+-_MODULE_SUCCESS_STATES = frozenset({"complete", "not_applicable", "not_found"})
+-# Module states that indicate an actual failure / retrieval error.
+-_MODULE_FAILED_STATES = frozenset({
+-    "source_error", "submission_error", "budget_exhausted",
+-    "blocked_policy", "blocked_robots",
+-})
+-# Module states where the resource was simply absent (clean, not an error).
+-_MODULE_NOT_FOUND_STATES = frozenset({"not_found"})
+-
+-
+-def _derive_operations_from_row(row: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
+-    """Derive best-effort operations metadata from the raw row when telemetry
+-    metrics are not available (the common path through build_output_contract.py).
+-
+-    Sources used (read-only; no mutation of extraction data):
+-    - ``row["modules"]``  – {module: {state, retry_count, final_timestamp}}
+-    - profile evidence records – for cost_usd (discovery) and pages (website)
+-
+-    Nothing is fabricated.  Values that cannot be derived reliably are set to
+-    0 rather than guessed, and optional fields are omitted when empty.
+-    """
+-    modules: dict[str, Any] = row.get("modules") or {}
+-    records: dict[str, Any] = profile.get("evidence") or {}
+-
+-    successful: list[str] = []
+-    failed: list[str] = []
+-    not_found: list[str] = []
+-    total_retries: int = 0
+-
+-    for mod_name, mod_info in modules.items():
+-        if not isinstance(mod_info, dict):
+-            continue
+-        state = str(mod_info.get("state") or "")
+-        retry_count = int(mod_info.get("retry_count") or 0)
+-        total_retries += retry_count
+-
+-        if state in _MODULE_FAILED_STATES:
+-            failed.append(mod_name)
+-        elif state in _MODULE_NOT_FOUND_STATES:
+-            # not_found is a clean terminal state — the HTTP request succeeded
+-            not_found.append(mod_name)
+-            successful.append(mod_name)
+-        elif state in _MODULE_SUCCESS_STATES:
+-            successful.append(mod_name)
+-
+-    # -- pages_crawled / pages_failed from website evidence --
+-    pages_crawled: int = 0
+-    pages_failed: int = 0
+-    _failed_extraction_states = {
+-        "failed", "oversized", "unsupported_content",
+-        "redirect_outside_domain", "robots_blocked",
+-    }
+-    for key in ("website", "website_discovered"):
+-        rec = records.get(key)
+-        if not isinstance(rec, dict) or rec.get("status") != "available":
+-            continue
+-        val = rec.get("value") if isinstance(rec.get("value"), dict) else {}
+-        for page in val.get("pages") or []:
+-            if not isinstance(page, dict):
+-                continue
+-            if page.get("extraction_state") in _failed_extraction_states or page.get("errors"):
+-                pages_failed += 1
+-            else:
+-                pages_crawled += 1
+-
+-    # -- third_party_cost_usd from discovery provider cost fields --
+-    # BRREG (official registry data) is free.  Discovery providers (Exa, Tavily)
+-    # write a cost_usd value into the website evidence record value dict.
+-    third_party_cost: float = 0.0
+-    for key in ("website", "website_discovered", "website_discovery"):
+-        rec = records.get(key)
+-        if not isinstance(rec, dict):
+-            continue
+-        val = rec.get("value") if isinstance(rec.get("value"), dict) else {}
+-        try:
+-            third_party_cost += float(val.get("cost_usd") or 0.0)
+-        except (TypeError, ValueError):
+-            pass
+-
+-    ops: dict[str, Any] = {
+-        "requests": 0,            # not derivable without telemetry log; 0 is honest
+-        "runtime_ms": 0,           # not derivable without telemetry log; 0 is honest
+-        "third_party_cost_usd": round(third_party_cost, 6),
+-    }
+-
+-    if modules:
+-        ops["successful_modules"] = sorted(set(successful))
+-        ops["failed_modules"] = sorted(set(failed))
+-        ops["not_found_modules"] = sorted(set(not_found))
+-        if total_retries:
+-            ops["retried_module_attempts"] = total_retries
+-
+-    if pages_crawled or pages_failed:
+-        ops["pages_crawled"] = pages_crawled
+-        ops["pages_failed"] = pages_failed
+-
+-    return ops
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+ 
+ 
+ # ---------------------------------------------------------------------------
+@@ -880,10 +648,6 @@ def _website_contact_claims(
+             website_rec,
+             claim_span=_claim_span(profile, website_rec),
+             availability=avail,
+-<<<<<<< HEAD
+-=======
+-            value=website_value if crawled else None,
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+         )
+     else:
+         ev_id = evidence_ids_map[website_key]
+diff --git a/src/norway_company_agent/telemetry.py b/src/norway_company_agent/telemetry.py
+index 5a978fd..2e4b87a 100644
+--- a/src/norway_company_agent/telemetry.py
++++ b/src/norway_company_agent/telemetry.py
+@@ -279,16 +279,12 @@ def build_metrics(
+         providers[provider]["failed"] += int(not event.get("success"))
+         providers[provider]["cache_hits"] += int(bool(event.get("cache_hit")))
+         providers[provider]["cache_misses"] += int(bool(event.get("cache_miss")))
+-<<<<<<< HEAD
+     # Gaps/errors in collected data are not processing failures. Only the explicit
+     # "failed" status is unsuccessful; the other terminal statuses count as processed.
+     success_count = sum(
+         1 for item in per_company.values()
+         if item.get("status") in {"completed", "completed_with_gaps", "completed_with_errors"}
+     )
+-=======
+-    success_count = sum(1 for item in per_company.values() if item.get("status") == "completed")
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+     failed_count = sum(1 for item in per_company.values() if item.get("status") == "failed")
+ 
+     # Step 3: build structured discovery blocks — one per provider.
+diff --git a/tests/test_phase1_website_contract.py b/tests/test_phase1_website_contract.py
+index 7e8dcbc..410329d 100644
+--- a/tests/test_phase1_website_contract.py
++++ b/tests/test_phase1_website_contract.py
+@@ -1,11 +1,6 @@
+-<<<<<<< HEAD
+ import json
+ from norway_company_agent.website import normalize_website_value
+ from norway_company_agent.output_contract import PUBLIC_EVIDENCE_KEYS, to_public_envelope
+-=======
+-from norway_company_agent.website import normalize_website_value
+-from norway_company_agent.output_contract import to_public_envelope
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+ from norway_company_agent.website_forensics import build_page_forensics
+ 
+ 
+@@ -48,11 +43,7 @@ def test_normalize_website_value_uses_phase1_contract():
+     assert normalized["discovery"]["cost_usd"] == 0.0
+ 
+ 
+-<<<<<<< HEAD
+ def test_public_evidence_carries_provenance_only_and_values_live_in_claims():
+-=======
+-def test_public_envelope_preserves_normalized_website_evidence():
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+     profile = {
+         "organisation_number": "123456789",
+         "name": "Example AS",
+@@ -63,19 +54,13 @@ def test_public_envelope_preserves_normalized_website_evidence():
+                 "source_type": "registry_linked_company_website",
+                 "source_url": "https://example.no",
+                 "retrieved_at": "2026-09-30T00:00:00Z",
+-<<<<<<< HEAD
+                 "content_sha256": "a" * 64,
+-=======
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+                 "value": {
+                     "final_url": "https://example.no/",
+                     "pages": [{"url": "https://example.no/about", "page_kind": "about"}],
+                     "jobs": "not_available",
+-<<<<<<< HEAD
+                     "phones": ["+47 22 00 00 00"],
+                     "social_links": [{"url": "https://facebook.com/example"}],
+-=======
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+                     "discovery": {"method": "direct", "providers_used": [], "candidates": [], "cost_usd": 0.0},
+                 },
+             }
+@@ -84,7 +69,6 @@ def test_public_envelope_preserves_normalized_website_evidence():
+ 
+     envelope = to_public_envelope({"profile": profile})
+ 
+-<<<<<<< HEAD
+     assert envelope["evidence"], "website evidence must exist"
+     for item in envelope["evidence"]:
+         assert tuple(item) == PUBLIC_EVIDENCE_KEYS
+@@ -93,13 +77,6 @@ def test_public_envelope_preserves_normalized_website_evidence():
+     assert claims["official_website"]["value"] == "https://example.no/"
+     assert claims["phones"]["value"] == ["+47 22 00 00 00"]
+     assert "social_links" not in json.dumps(envelope)
+-=======
+-    website_item = next(item for item in envelope["evidence"] if item.get("module") == "website")
+-    assert website_item["status"] == "available"
+-    assert website_item["value"]["pages"][0]["page_kind"] == "about"
+-    assert website_item["value"]["jobs"] == "not_available"
+-    assert "social_links" not in website_item["value"]
+->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
+ 
+ 
+ def test_page_forensics_keeps_unormalized_job_and_news_evidence():

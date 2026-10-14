@@ -18,15 +18,10 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from norway_company_agent.batch import (  # noqa: E402
     backfill_from_registry_live,
     profiles_from_inputs,
-<<<<<<< HEAD
     read_organisation_inputs,
     terminal_envelope,
 )
 from norway_company_agent.vocabulary import SCHEMA_VERSION, batch_state  # noqa: E402
-=======
-    terminal_envelope,
-)
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 from norway_company_agent.identity import apply_website_identity_gate  # noqa: E402
 from norway_company_agent.official import (  # noqa: E402
     accounting_obligation_assessment,
@@ -38,7 +33,6 @@ from norway_company_agent.website import fetch_website  # noqa: E402
 
 
 class ProgressTracker:
-<<<<<<< HEAD
     def __init__(self, path: Path, total: int, already_completed: list[dict] | None = None):
         self.path = path
         self.lock = threading.Lock()
@@ -61,24 +55,6 @@ class ProgressTracker:
             "last_progress_at": now,
             "root_error": None,
             "failed_orgs": failed_orgs,
-=======
-    def __init__(self, path: Path, total: int):
-        self.path = path
-        self.lock = threading.Lock()
-        now = time.time()
-        self.state = {
-            "total": total,
-            "started": 0,
-            "completed": 0,
-            "successful": 0,
-            "failed": 0,
-            "active": 0,
-            "last_company": None,
-            "last_completed_company": None,
-            "last_progress_at": now,
-            "root_error": None,
-            "failed_orgs": [],
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
             "total_retries": 0,
         }
         self._write_locked()
@@ -164,7 +140,6 @@ class CompanyTimingTracker:
         print(f"SLOWEST company: {slowest[0]} | {slowest[1]:.1f} sec", flush=True)
 
 
-<<<<<<< HEAD
 class ProfileCheckpoint:
     """Append-only, fsync-backed checkpoint for each completed company."""
 
@@ -297,35 +272,6 @@ def retry_source_error_modules(profile: dict, modules: set[str], *, max_retries:
         if not unresolved:
             profile["_batch_state"] = "ok"
             profile.pop("_batch_error", None)
-=======
-def read_orgs(path: Path) -> list[str]:
-    text = path.read_text(encoding="utf-8")
-    stripped = text.lstrip()
-    if path.suffix.lower() == ".json" or stripped.startswith("["):
-        data = json.loads(text)
-        if isinstance(data, list):
-            return [str(item) for item in data]
-        if isinstance(data, dict):
-            return [str(v) for v in data.values()]
-        return []
-
-    rows = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        if line.startswith("{"):
-            try:
-                row = json.loads(line)
-                org = row.get("organisation_number") or row.get("org") or row.get("id")
-                if org:
-                    rows.append(str(org))
-            except json.JSONDecodeError:
-                pass
-        else:
-            rows.append(line)
-    return rows
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 
 
 def _build_failure_profile(organisation_number: str, modules: set[str], error_message: str) -> dict:
@@ -399,7 +345,6 @@ def collect_profile(
             website_record, _ = fetch_website(profile.get("website"), organisation_number=organisation_number)
             gated = apply_website_identity_gate(profile, website_record)
             evidence["website"] = gated["website"]
-<<<<<<< HEAD
         retry_source_error_modules(profile, modules)
         # _batch_state is derived from terminal_status: failed iff a required module is source_error.
         profile["_batch_state"] = batch_state(profile)
@@ -409,11 +354,6 @@ def collect_profile(
                 RuntimeError(profile.get("_batch_error") or "one or more modules remain in source_error")
                 if profile.get("_batch_state") == "failed" else None,
             )
-=======
-        profile["_batch_state"] = "ok"
-        if progress:
-            progress.finished_company(organisation_number)
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
         duration = time.perf_counter() - started
         print(
             f"[{datetime.now().strftime('%H:%M:%S')}] END company {organisation_number} | {duration:.1f} sec | SUCCESS",
@@ -431,11 +371,6 @@ def collect_profile(
         )
         if timings:
             timings.record(organisation_number, duration)
-<<<<<<< HEAD
-=======
-        if progress:
-            progress.finished_company(organisation_number, exc)
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
         profile["_batch_state"] = "failed"
         profile["_batch_error"] = error[:500]
         # Build out missing evidence modules so terminal_envelope produces a valid (failed) envelope
@@ -471,7 +406,6 @@ def collect_profile(
                 note="collection_exception",
                 source_row_key=organisation_number,
             )
-<<<<<<< HEAD
         retry_source_error_modules(profile, modules)
         profile["_batch_state"] = batch_state(profile)
         if profile["_batch_state"] == "ok":
@@ -482,8 +416,6 @@ def collect_profile(
                 RuntimeError(profile.get("_batch_error") or "one or more modules remain in source_error")
                 if profile.get("_batch_state") == "failed" else None,
             )
-=======
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
         return profile
 
 
@@ -500,7 +432,6 @@ def main() -> int:
     args = p.parse_args()
 
     org_file = Path(args.organisations)
-<<<<<<< HEAD
     try:
         organisation_records = read_organisation_inputs(org_file)
     except (OSError, ValueError) as exc:
@@ -546,22 +477,6 @@ def main() -> int:
                 org = str(profile["organisation_number"])
                 try:
                     row = future.result()
-=======
-    orgs = read_orgs(org_file)
-    profiles = profiles_from_inputs([{"organisation_number": org} for org in orgs])
-    modules = {module.strip() for module in args.modules.split(",") if module.strip()}
-    progress = ProgressTracker(args.progress_file, len(profiles)) if args.progress_file else None
-    timings = CompanyTimingTracker()
-
-    collected: list[dict] = []
-    try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(12, max(1, len(profiles)))) as executor:
-            futures = [executor.submit(collect_profile, profile, modules, progress, timings) for profile in profiles]
-            for profile, future in zip(profiles, futures):
-                org = str(profile["organisation_number"])
-                try:
-                    collected.append(future.result())
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
                 except Exception as exc:
                     error = f"{type(exc).__name__}: {exc}".replace("\r", " ").replace("\n", " ")
                     print(
@@ -570,7 +485,6 @@ def main() -> int:
                     )
                     if timings:
                         timings.record(org, 0.0)
-<<<<<<< HEAD
                     recovered = _build_failure_profile(org, modules, error)
                     if progress:
                         progress.finished_company(org, exc)
@@ -586,15 +500,6 @@ def main() -> int:
         for profile in profiles
     ]
 
-=======
-                    if progress:
-                        progress.finished_company(org, exc)
-                    recovered = _build_failure_profile(org, modules, error)
-                    collected.append(recovered)
-    finally:
-        timings.print_summary()
-
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
     # Count retries from the request log if available
     total_retries = 0
     try:
@@ -615,37 +520,19 @@ def main() -> int:
     if progress:
         progress.add_retries(total_retries)
 
-<<<<<<< HEAD
     atomic_write_jsonl(Path(args.profiles_output), collected)
-=======
-    Path(args.profiles_output).parent.mkdir(parents=True, exist_ok=True)
-    with open(args.profiles_output, "w", encoding="utf-8") as handle:
-        for row in collected:
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 
     envelope_rows = [
         terminal_envelope(
             row,
             run_id=args.run_id,
-<<<<<<< HEAD
-=======
-            modules=row.get("evidence", {}).keys(),
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
             started_at="",
             completed_at="",
         )
         for row in collected
     ]
 
-<<<<<<< HEAD
     atomic_write_jsonl(Path(args.output), envelope_rows)
-=======
-    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-    with open(args.output, "w", encoding="utf-8") as handle:
-        for row in envelope_rows:
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
 
     # Compute failed orgs via profile _batch_state (authoritative: pipeline crashed vs completed cleanly)
     expected = args.expected_count or len(collected)
@@ -693,19 +580,12 @@ def main() -> int:
     if progress and not failed_orgs:
         progress_failed = progress.state.get("failed") or 0
         if progress_failed:
-<<<<<<< HEAD
             print(f"  (progress-tracker failed: {progress_failed}; envelopes carry terminal_status, not a failed flag)", flush=True)
-=======
-            print(f"  (progress-tracker failed: {progress_failed}; envelopes still marked complete)", flush=True)
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
     print("=" * 60, flush=True)
     print("", flush=True)
 
     report = {
-<<<<<<< HEAD
         "schema_version": SCHEMA_VERSION,
-=======
->>>>>>> 970c2821c2cb2b51e112fba6317fab76e65e20b3
         "run_id": args.run_id,
         "expected_count": expected,
         "profiles_written": len(collected),

@@ -460,7 +460,19 @@ def fetch_website(url: str | None, *, timeout: float = 15.0, max_bytes: int = 2_
     normalized = normalize_homepage(url)
     if not normalized:
         emit_crawl_event("crawler_completed", organisation_number=organisation_number or "", status="not_found")
-        return evidence("website", "not_found", "registry_linked_company_website", "https://data.brreg.no/enhetsregisteret/api/enheter", note="No valid registry website URL"), {"requests": 0, "bytes": 0, "latencies_ms": []}
+        brreg_entity_url = (
+            f"https://data.brreg.no/enhetsregisteret/api/enheter/{organisation_number}"
+            if organisation_number
+            else "https://data.brreg.no/enhetsregisteret/api/enheter"
+        )
+        return evidence(
+            "website",
+            "not_found",
+            "official_registry_live",
+            brreg_entity_url,
+            note="Registry field hjemmeside is empty or not a valid URL",
+            source_row_key=organisation_number,
+        ), {"requests": 0, "bytes": 0, "latencies_ms": []}
     try:
         assert_public_url(normalized)
     except ValueError as exc:
@@ -642,7 +654,7 @@ def fetch_website(url: str | None, *, timeout: float = 15.0, max_bytes: int = 2_
         record_request(module="website", provider="website/http", operation="GET homepage", success=False, status=exc.code, duration_ms=elapsed, organisation_number=organisation_number, error=f"HTTP {exc.code}")
         emit_crawl_event("homepage_completed", url=normalized, status="http_error", code=exc.code)
         emit_crawl_event("crawler_completed", organisation_number=organisation_number or "", status="http_error", url=normalized)
-        status = "not_found" if exc.code in {404, 410} else "source_error"
+        status = "not_found" if exc.code in {404, 410} else "blocked" if exc.code in {401, 403, 451} else "source_error"
         return evidence("website", status, "registry_linked_company_website", normalized, note=f"HTTP {exc.code}"), {"requests": 2, "bytes": 0, "latencies_ms": [elapsed]}
     except urllib.error.URLError as exc:
         record_request(module="website", provider="website/http", operation="GET homepage", success=False, status=0, duration_ms=int((time.monotonic() - started) * 1000), organisation_number=organisation_number, error="URLError")

@@ -1,9 +1,17 @@
 from __future__ import annotations
 
 from typing import Any
+import urllib.parse
 
 from .changes import diff_claims
-from .vocabulary import MODULE_KEYS, SCHEMA_VERSION, derive_terminal_status, module_states
+from .vocabulary import (
+    MODULE_KEYS,
+    SCHEMA_VERSION,
+    derive_public_terminal_status,
+    derive_terminal_status,
+    module_states,
+    public_module_states,
+)
 from .website import normalize_website_value
 
 
@@ -196,6 +204,26 @@ PUBLIC_RUN_KEYS = ("run_id", "started_at", "completed_at", "terminal_status")
 PUBLIC_EVIDENCE_KEYS = ("id", "source_url", "source_class", "retrieved_at", "content_sha256", "claim_span")
 
 
+def _is_missing_value(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    if isinstance(value, dict) and not value:
+        return True
+    return False
+
+
+def _public_source_class(record: dict[str, Any]) -> str:
+    raw = str(record.get("source_class") or record.get("source_type") or "unknown")
+    host = (urllib.parse.urlparse(str(record.get("source_url") or "")).hostname or "").lower()
+    if host == "brreg.no" or host.endswith(".brreg.no"):
+        return raw if raw.startswith("official_") else "official_registry_live"
+    elif raw in {"registry_linked_company_website", "company_site"}:
+        return "company_owned"
+    return raw
+
+
 def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = None, previous_envelope: dict[str, Any] | None = None) -> dict[str, Any]:
     profile = row.get("profile") if isinstance(row.get("profile"), dict) else row
     organisation_number = str(profile.get("organisation_number") or row.get("organisation_number") or "")
@@ -217,9 +245,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = 
             return evidence_ids[key]
         item_id = f"ev-{organisation_number}-{len(evidence_items)}"
         evidence_ids[key] = item_id
-        source_class = str(record.get("source_class") or record.get("source_type") or "unknown")
-        if source_class in {"registry_linked_company_website", "company_site"}:
-            source_class = "company_owned"
+        source_class = _public_source_class(record)
         item = {
             "id": item_id,
             "source_url": str(record.get("source_url") or ""),
@@ -245,9 +271,11 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = 
                 availability=availability,
             )
             for field, path in REGISTRY_CLAIM_FIELDS:
+                val = _nested_get(registry_value, path) if availability == "available" else None
+                field_avail = "not_available" if availability == "available" and _is_missing_value(val) else availability
                 claims.append(_claim(
-                    field, _nested_get(registry_value, path) if availability == "available" else None,
-                    availability, _confidence(availability, official=True), [registry_id],
+                    field, val if field_avail != "not_available" else None,
+                    field_avail, _confidence(field_avail, official=True), [registry_id],
                 ))
             _append_error(errors, "registry_live", registry, availability)
 
@@ -320,7 +348,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = 
         claims.append(_claim(field, value, availability, _confidence(availability), [evidence_id]))
 
     claims = _complete_claims(claims)
-    modules = module_states(profile)
+    modules = public_module_states(profile)
     ops = _operations(metrics, profile)
 
     # Compute changes[] by comparing current normalized claims against the
@@ -347,7 +375,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = 
             "run_id": str(row.get("run_id") or ""),
             "started_at": str(row.get("started_at") or ""),
             "completed_at": str(row.get("completed_at") or ""),
-            "terminal_status": derive_terminal_status(modules),
+            "terminal_status": derive_public_terminal_status(modules),
         },
         "modules": modules,
         "claims": claims,
@@ -385,10 +413,10 @@ def conversion_failure_envelope(row: dict[str, Any], error: Exception) -> dict[s
     profile = row.get("profile") if isinstance(row.get("profile"), dict) else row
     organisation_number = str(profile.get("organisation_number") or row.get("organisation_number") or "")
     try:
-        modules = module_states(profile)
+        modules = public_module_states(profile)
     except Exception:
         # The profile itself is unreadable (for example an unknown evidence status).
-        modules = {key: {"state": "source_error", "retry_count": 0} for key in MODULE_KEYS}
+        modules = {key: {"state": "failed", "retry_count": 0} for key in MODULE_KEYS}
     return {
         "schema_version": SCHEMA_VERSION,
         "organisation_number": organisation_number,
@@ -436,6 +464,10 @@ def _is_empty_checked(field: str, value: Any) -> bool:
         return isinstance(value.get("locations"), list) and not value["locations"]
     if field == "roles" and isinstance(value, dict):
         return isinstance(value.get("roles"), list) and not value["roles"]
+    if field == "financials" and isinstance(value, dict):
+        return isinstance(value.get("records"), list) and not value["records"]
+    if field == "financial_history" and isinstance(value, dict):
+        return isinstance(value.get("years"), list) and not value["years"]
     return False
 
 
@@ -502,6 +534,10 @@ def _claim(
 ) -> dict[str, Any]:
     if availability not in ALLOWED_AVAILABILITY:
         availability = "failed"
+    if availability == "available" and _is_missing_value(value):
+        availability = "not_available"
+        value = None
+        confidence = None
     return {
         "field": field,
         "value": value,

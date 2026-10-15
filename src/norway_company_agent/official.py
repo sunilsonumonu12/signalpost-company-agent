@@ -207,6 +207,8 @@ def normalize_entity(body: Any) -> dict[str, Any]:
 
 
 def _classified(field: str, source_type: str, result: FetchResult, value: Any = None) -> dict[str, Any]:
+    if result.status == 200 and result.error:
+        return evidence(field, "source_error", source_type, result.url, note=result.error, content_sha256=result.content_sha256, retrieved_at=result.retrieved_at, effective_at=result.effective_at)
     if result.status == 200:
         return evidence(field, "available", source_type, result.url, value=result.body if value is None else value, content_sha256=result.content_sha256, retrieved_at=result.retrieved_at, effective_at=result.effective_at)
     if result.status in {404, 410}:

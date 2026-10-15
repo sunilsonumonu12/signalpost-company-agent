@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sys
+import urllib.parse
 import uuid
 from collections import Counter
 from datetime import datetime, timezone
@@ -34,10 +35,11 @@ from norway_company_agent.output_contract import (  # noqa: E402
 )
 from norway_company_agent.vocabulary import (  # noqa: E402
     MODULE_KEYS,
+    PUBLIC_MODULE_STATES,
     SCHEMA_VERSION,
     TERMINAL_STATUSES,
-    derive_terminal_status,
-    invalid_module_states,
+    derive_public_terminal_status,
+    invalid_public_module_states,
 )
 
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -61,6 +63,8 @@ CHECK_NAMES = (
     "12_terminal_status_consistent_with_modules",
     "13_expected_count",
     "14_no_conversion_failures",
+    "15_available_claims_have_value",
+    "16_registry_sources_not_company_owned",
 )
 
 
@@ -199,7 +203,7 @@ def check_enums(rows: list[dict[str, Any]]) -> list[str]:
         status = (row.get("run") or {}).get("terminal_status")
         if status not in TERMINAL_STATUSES:
             out.append(f"{org}: terminal_status {status!r} not in {list(TERMINAL_STATUSES)}")
-        out.extend(f"{org}: {problem}" for problem in invalid_module_states(row.get("modules") or {}))
+        out.extend(f"{org}: {problem}" for problem in invalid_public_module_states(row.get("modules") or {}))
         for claim in _claims(row):
             field = claim.get("field")
             if claim.get("availability") not in ALLOWED_AVAILABILITY:
@@ -252,9 +256,9 @@ def check_terminal_status(rows: list[dict[str, Any]]) -> list[str]:
     out: list[str] = []
     for row in rows:
         modules = row.get("modules") or {}
-        if invalid_module_states(modules):
+        if invalid_public_module_states(modules):
             continue  # check 8 already reports it
-        expected = derive_terminal_status(modules)
+        expected = derive_public_terminal_status(modules)
         actual = (row.get("run") or {}).get("terminal_status")
         if actual != expected:
             out.append(f"{_org(row)}: terminal_status {actual!r} but modules imply {expected!r}")
@@ -277,6 +281,34 @@ def check_conversion_failures(rows: list[dict[str, Any]]) -> list[str]:
     ]
 
 
+def check_available_claims_have_value(rows: list[dict[str, Any]]) -> list[str]:
+    out: list[str] = []
+    for row in rows:
+        org = _org(row)
+        for claim in _claims(row):
+            if claim.get("availability") == "available":
+                val = claim.get("value")
+                field = claim.get("field")
+                if val is None or (isinstance(val, str) and not val.strip()) or (isinstance(val, dict) and not val):
+                    out.append(f"{org}: claim {field!r} is available but has empty/null value: {val!r}")
+    return out
+
+
+def check_registry_sources_not_company_owned(rows: list[dict[str, Any]]) -> list[str]:
+    out: list[str] = []
+    for row in rows:
+        org = _org(row)
+        for item in _evidence_items(row):
+            url = str(item.get("source_url") or "")
+            host = (urllib.parse.urlparse(url).hostname or "").lower()
+            source_class = item.get("source_class")
+            if (host == "brreg.no" or host.endswith(".brreg.no")) and source_class == "company_owned":
+                out.append(
+                    f"{org}: evidence {item.get('id')!r} from host {host!r} has source_class 'company_owned'"
+                )
+    return out
+
+
 def validate(rows: list[dict[str, Any]], *, run_id: str | None = None, expected_count: int | None = None) -> dict[str, list[str]]:
     results = {
         CHECK_NAMES[0]: check_row_keysets(rows),
@@ -293,6 +325,8 @@ def validate(rows: list[dict[str, Any]], *, run_id: str | None = None, expected_
         CHECK_NAMES[11]: check_terminal_status(rows),
         CHECK_NAMES[12]: check_expected_count(rows, expected_count),
         CHECK_NAMES[13]: check_conversion_failures(rows),
+        CHECK_NAMES[14]: check_available_claims_have_value(rows),
+        CHECK_NAMES[15]: check_registry_sources_not_company_owned(rows),
     }
     return results
 

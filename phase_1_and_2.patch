@@ -1,0 +1,428 @@
+diff --git a/scripts/validate_envelopes.py b/scripts/validate_envelopes.py
+index 82b5abd..48464c8 100644
+--- a/scripts/validate_envelopes.py
++++ b/scripts/validate_envelopes.py
+@@ -15,6 +15,7 @@ import json
+ import os
+ import re
+ import sys
++import urllib.parse
+ import uuid
+ from collections import Counter
+ from datetime import datetime, timezone
+@@ -34,10 +35,11 @@ from norway_company_agent.output_contract import (  # noqa: E402
+ )
+ from norway_company_agent.vocabulary import (  # noqa: E402
+     MODULE_KEYS,
++    PUBLIC_MODULE_STATES,
+     SCHEMA_VERSION,
+     TERMINAL_STATUSES,
+-    derive_terminal_status,
+-    invalid_module_states,
++    derive_public_terminal_status,
++    invalid_public_module_states,
+ )
+ 
+ HEX64 = re.compile(r"^[0-9a-f]{64}$")
+@@ -61,6 +63,8 @@ CHECK_NAMES = (
+     "12_terminal_status_consistent_with_modules",
+     "13_expected_count",
+     "14_no_conversion_failures",
++    "15_available_claims_have_value",
++    "16_registry_sources_not_company_owned",
+ )
+ 
+ 
+@@ -199,7 +203,7 @@ def check_enums(rows: list[dict[str, Any]]) -> list[str]:
+         status = (row.get("run") or {}).get("terminal_status")
+         if status not in TERMINAL_STATUSES:
+             out.append(f"{org}: terminal_status {status!r} not in {list(TERMINAL_STATUSES)}")
+-        out.extend(f"{org}: {problem}" for problem in invalid_module_states(row.get("modules") or {}))
++        out.extend(f"{org}: {problem}" for problem in invalid_public_module_states(row.get("modules") or {}))
+         for claim in _claims(row):
+             field = claim.get("field")
+             if claim.get("availability") not in ALLOWED_AVAILABILITY:
+@@ -252,9 +256,9 @@ def check_terminal_status(rows: list[dict[str, Any]]) -> list[str]:
+     out: list[str] = []
+     for row in rows:
+         modules = row.get("modules") or {}
+-        if invalid_module_states(modules):
++        if invalid_public_module_states(modules):
+             continue  # check 8 already reports it
+-        expected = derive_terminal_status(modules)
++        expected = derive_public_terminal_status(modules)
+         actual = (row.get("run") or {}).get("terminal_status")
+         if actual != expected:
+             out.append(f"{_org(row)}: terminal_status {actual!r} but modules imply {expected!r}")
+@@ -277,6 +281,34 @@ def check_conversion_failures(rows: list[dict[str, Any]]) -> list[str]:
+     ]
+ 
+ 
++def check_available_claims_have_value(rows: list[dict[str, Any]]) -> list[str]:
++    out: list[str] = []
++    for row in rows:
++        org = _org(row)
++        for claim in _claims(row):
++            if claim.get("availability") == "available":
++                val = claim.get("value")
++                field = claim.get("field")
++                if val is None or (isinstance(val, str) and not val.strip()) or (isinstance(val, dict) and not val):
++                    out.append(f"{org}: claim {field!r} is available but has empty/null value: {val!r}")
++    return out
++
++
++def check_registry_sources_not_company_owned(rows: list[dict[str, Any]]) -> list[str]:
++    out: list[str] = []
++    for row in rows:
++        org = _org(row)
++        for item in _evidence_items(row):
++            url = str(item.get("source_url") or "")
++            host = (urllib.parse.urlparse(url).hostname or "").lower()
++            source_class = item.get("source_class")
++            if (host == "brreg.no" or host.endswith(".brreg.no")) and source_class == "company_owned":
++                out.append(
++                    f"{org}: evidence {item.get('id')!r} from host {host!r} has source_class 'company_owned'"
++                )
++    return out
++
++
+ def validate(rows: list[dict[str, Any]], *, run_id: str | None = None, expected_count: int | None = None) -> dict[str, list[str]]:
+     results = {
+         CHECK_NAMES[0]: check_row_keysets(rows),
+@@ -293,6 +325,8 @@ def validate(rows: list[dict[str, Any]], *, run_id: str | None = None, expected_
+         CHECK_NAMES[11]: check_terminal_status(rows),
+         CHECK_NAMES[12]: check_expected_count(rows, expected_count),
+         CHECK_NAMES[13]: check_conversion_failures(rows),
++        CHECK_NAMES[14]: check_available_claims_have_value(rows),
++        CHECK_NAMES[15]: check_registry_sources_not_company_owned(rows),
+     }
+     return results
+ 
+diff --git a/src/norway_company_agent/official.py b/src/norway_company_agent/official.py
+index 8793fa6..c74630b 100644
+--- a/src/norway_company_agent/official.py
++++ b/src/norway_company_agent/official.py
+@@ -207,6 +207,8 @@ def normalize_entity(body: Any) -> dict[str, Any]:
+ 
+ 
+ def _classified(field: str, source_type: str, result: FetchResult, value: Any = None) -> dict[str, Any]:
++    if result.status == 200 and result.error:
++        return evidence(field, "source_error", source_type, result.url, note=result.error, content_sha256=result.content_sha256, retrieved_at=result.retrieved_at, effective_at=result.effective_at)
+     if result.status == 200:
+         return evidence(field, "available", source_type, result.url, value=result.body if value is None else value, content_sha256=result.content_sha256, retrieved_at=result.retrieved_at, effective_at=result.effective_at)
+     if result.status in {404, 410}:
+diff --git a/src/norway_company_agent/output_contract.py b/src/norway_company_agent/output_contract.py
+index ae07875..9deeb25 100644
+--- a/src/norway_company_agent/output_contract.py
++++ b/src/norway_company_agent/output_contract.py
+@@ -1,9 +1,17 @@
+ from __future__ import annotations
+ 
+ from typing import Any
++import urllib.parse
+ 
+ from .changes import diff_claims
+-from .vocabulary import MODULE_KEYS, SCHEMA_VERSION, derive_terminal_status, module_states
++from .vocabulary import (
++    MODULE_KEYS,
++    SCHEMA_VERSION,
++    derive_public_terminal_status,
++    derive_terminal_status,
++    module_states,
++    public_module_states,
++)
+ from .website import normalize_website_value
+ 
+ 
+@@ -196,6 +204,26 @@ PUBLIC_RUN_KEYS = ("run_id", "started_at", "completed_at", "terminal_status")
+ PUBLIC_EVIDENCE_KEYS = ("id", "source_url", "source_class", "retrieved_at", "content_sha256", "claim_span")
+ 
+ 
++def _is_missing_value(value: Any) -> bool:
++    if value is None:
++        return True
++    if isinstance(value, str) and not value.strip():
++        return True
++    if isinstance(value, dict) and not value:
++        return True
++    return False
++
++
++def _public_source_class(record: dict[str, Any]) -> str:
++    raw = str(record.get("source_class") or record.get("source_type") or "unknown")
++    host = (urllib.parse.urlparse(str(record.get("source_url") or "")).hostname or "").lower()
++    if host == "brreg.no" or host.endswith(".brreg.no"):
++        return raw if raw.startswith("official_") else "official_registry_live"
++    elif raw in {"registry_linked_company_website", "company_site"}:
++        return "company_owned"
++    return raw
++
++
+ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = None, previous_envelope: dict[str, Any] | None = None) -> dict[str, Any]:
+     profile = row.get("profile") if isinstance(row.get("profile"), dict) else row
+     organisation_number = str(profile.get("organisation_number") or row.get("organisation_number") or "")
+@@ -217,9 +245,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+             return evidence_ids[key]
+         item_id = f"ev-{organisation_number}-{len(evidence_items)}"
+         evidence_ids[key] = item_id
+-        source_class = str(record.get("source_class") or record.get("source_type") or "unknown")
+-        if source_class in {"registry_linked_company_website", "company_site"}:
+-            source_class = "company_owned"
++        source_class = _public_source_class(record)
+         item = {
+             "id": item_id,
+             "source_url": str(record.get("source_url") or ""),
+@@ -245,9 +271,11 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+                 availability=availability,
+             )
+             for field, path in REGISTRY_CLAIM_FIELDS:
++                val = _nested_get(registry_value, path) if availability == "available" else None
++                field_avail = "not_available" if availability == "available" and _is_missing_value(val) else availability
+                 claims.append(_claim(
+-                    field, _nested_get(registry_value, path) if availability == "available" else None,
+-                    availability, _confidence(availability, official=True), [registry_id],
++                    field, val if field_avail != "not_available" else None,
++                    field_avail, _confidence(field_avail, official=True), [registry_id],
+                 ))
+             _append_error(errors, "registry_live", registry, availability)
+ 
+@@ -320,7 +348,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+         claims.append(_claim(field, value, availability, _confidence(availability), [evidence_id]))
+ 
+     claims = _complete_claims(claims)
+-    modules = module_states(profile)
++    modules = public_module_states(profile)
+     ops = _operations(metrics, profile)
+ 
+     # Compute changes[] by comparing current normalized claims against the
+@@ -347,7 +375,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+             "run_id": str(row.get("run_id") or ""),
+             "started_at": str(row.get("started_at") or ""),
+             "completed_at": str(row.get("completed_at") or ""),
+-            "terminal_status": derive_terminal_status(modules),
++            "terminal_status": derive_public_terminal_status(modules),
+         },
+         "modules": modules,
+         "claims": claims,
+@@ -385,10 +413,10 @@ def conversion_failure_envelope(row: dict[str, Any], error: Exception) -> dict[s
+     profile = row.get("profile") if isinstance(row.get("profile"), dict) else row
+     organisation_number = str(profile.get("organisation_number") or row.get("organisation_number") or "")
+     try:
+-        modules = module_states(profile)
++        modules = public_module_states(profile)
+     except Exception:
+         # The profile itself is unreadable (for example an unknown evidence status).
+-        modules = {key: {"state": "source_error", "retry_count": 0} for key in MODULE_KEYS}
++        modules = {key: {"state": "failed", "retry_count": 0} for key in MODULE_KEYS}
+     return {
+         "schema_version": SCHEMA_VERSION,
+         "organisation_number": organisation_number,
+@@ -436,6 +464,10 @@ def _is_empty_checked(field: str, value: Any) -> bool:
+         return isinstance(value.get("locations"), list) and not value["locations"]
+     if field == "roles" and isinstance(value, dict):
+         return isinstance(value.get("roles"), list) and not value["roles"]
++    if field == "financials" and isinstance(value, dict):
++        return isinstance(value.get("records"), list) and not value["records"]
++    if field == "financial_history" and isinstance(value, dict):
++        return isinstance(value.get("years"), list) and not value["years"]
+     return False
+ 
+ 
+@@ -502,6 +534,10 @@ def _claim(
+ ) -> dict[str, Any]:
+     if availability not in ALLOWED_AVAILABILITY:
+         availability = "failed"
++    if availability == "available" and _is_missing_value(value):
++        availability = "not_available"
++        value = None
++        confidence = None
+     return {
+         "field": field,
+         "value": value,
+diff --git a/src/norway_company_agent/vocabulary.py b/src/norway_company_agent/vocabulary.py
+index 555b47c..eb51806 100644
+--- a/src/norway_company_agent/vocabulary.py
++++ b/src/norway_company_agent/vocabulary.py
+@@ -98,6 +98,148 @@ def module_states(profile: dict[str, Any]) -> dict[str, dict[str, Any]]:
+     return states
+ 
+ 
++PUBLIC_MODULE_STATES: tuple[str, ...] = (
++    "available",
++    "not_available",
++    "blocked",
++    "not_applicable",
++    "ambiguous",
++    "failed",
++)
++
++WEBSITE_IDENTITY_MODULES: tuple[str, ...] = ("website", "website_discovered")
++
++
++def _identity_assessment(record: dict[str, Any] | None) -> dict[str, Any] | None:
++    if not isinstance(record, dict):
++        return None
++    val = record.get("value")
++    if not isinstance(val, dict):
++        return None
++    assessment = val.get("identity_assessment")
++    if isinstance(assessment, dict) and assessment:
++        return assessment
++    return None
++
++
++def public_module_state(
++    internal: dict[str, Any],
++    *,
++    module: str = "",
++    record: dict[str, Any] | None = None,
++    website_internal_state: str = "",
++) -> dict[str, Any]:
++    """Map one internal module state dict onto the public 6-state vocabulary."""
++    if not isinstance(internal, dict):
++        raise UnknownModuleStatusError(
++            f"module {module!r}: internal state is not a dict: {internal!r}"
++        )
++    status = internal.get("state")
++    if status not in MODULE_STATES:
++        raise UnknownModuleStatusError(
++            f"module {module!r}: unknown internal module state {status!r}; "
++            f"allowed: {list(MODULE_STATES)}"
++        )
++
++    retry_count = int(internal.get("retry_count") or 0)
++
++    if status == "available":
++        if module in WEBSITE_IDENTITY_MODULES:
++            assessment = _identity_assessment(record)
++            if assessment is not None and assessment.get("publishable") is False:
++                pub_state = "ambiguous"
++            else:
++                pub_state = "available"
++        else:
++            pub_state = "available"
++    elif status == "not_found":
++        pub_state = "not_available"
++    elif status == "not_applicable":
++        pub_state = "not_applicable"
++    elif status == "blocked":
++        pub_state = "blocked"
++    elif status == "source_error":
++        if module in WEBSITE_IDENTITY_MODULES:
++            assessment = _identity_assessment(record)
++            if assessment is not None and assessment.get("decision") == "REJECT":
++                pub_state = "not_available"
++            else:
++                pub_state = "failed"
++        else:
++            pub_state = "failed"
++    elif status == "not_fetched":
++        if module in ("website_discovery", "website_discovered") and website_internal_state == "available":
++            pub_state = "not_applicable"
++        elif module in REQUIRED_MODULES:
++            pub_state = "failed"
++        else:
++            pub_state = "not_available"
++    else:
++        raise UnknownModuleStatusError(
++            f"module {module!r}: unhandled internal state {status!r}"
++        )
++
++    out: dict[str, Any] = {"state": pub_state, "retry_count": retry_count}
++    if pub_state == "blocked":
++        out["reason"] = internal.get("reason") or "policy"
++    return out
++
++
++def public_module_states(profile: dict[str, Any]) -> dict[str, dict[str, Any]]:
++    """Uniform module states for one profile, mapped to the public 6-state vocabulary."""
++    internals = module_states(profile)
++    records = profile.get("evidence") if isinstance(profile.get("evidence"), dict) else {}
++    website_internal = internals.get("website", {}).get("state", "")
++    states: dict[str, dict[str, Any]] = {}
++    for key in MODULE_KEYS:
++        internal = internals[key]
++        raw_record = records.get(key)
++        states[key] = public_module_state(
++            internal,
++            module=key,
++            record=raw_record,
++            website_internal_state=website_internal,
++        )
++    return states
++
++
++def derive_public_terminal_status(states: dict[str, dict[str, Any]]) -> str:
++    """completed | completed_with_gaps | failed, derived from public module states."""
++    if any(states[key]["state"] == "failed" for key in REQUIRED_MODULES):
++        return "failed"
++    for key in COVERAGE_MODULES:
++        state = states[key]["state"]
++        if state in {"not_available", "blocked", "ambiguous"} or (key not in REQUIRED_MODULES and state == "failed"):
++            return "completed_with_gaps"
++    return "completed"
++
++
++def invalid_public_module_states(states: dict[str, Any]) -> list[str]:
++    """Violations for one public `modules` mapping (used by validators)."""
++    problems: list[str] = []
++    if tuple(states) != MODULE_KEYS:
++        missing = [key for key in MODULE_KEYS if key not in states]
++        extra = [key for key in states if key not in MODULE_KEYS]
++        problems.append(f"module keys differ from fixed list (missing={missing}, extra={extra})")
++    for key, item in states.items():
++        if not isinstance(item, dict):
++            problems.append(f"module {key!r} is not an object")
++            continue
++        state = item.get("state")
++        if state not in PUBLIC_MODULE_STATES:
++            problems.append(f"module {key!r} has state {state!r} outside {list(PUBLIC_MODULE_STATES)}")
++        reason = item.get("reason")
++        if state == "blocked" and reason not in BLOCKED_REASONS:
++            problems.append(f"module {key!r} is blocked with reason {reason!r}; allowed {list(BLOCKED_REASONS)}")
++        if state != "blocked" and "reason" in item:
++            problems.append(f"module {key!r} has a reason but state is {state!r}")
++        retry = item.get("retry_count")
++        if not isinstance(retry, int) or isinstance(retry, bool) or retry < 0:
++            problems.append(f"module {key!r} retry_count {retry!r} is not a non-negative integer")
++    return problems
++
++
++
+ def derive_terminal_status(states: dict[str, dict[str, Any]]) -> str:
+     """completed | completed_with_gaps | failed, derived from module states only."""
+     if any(states[key]["state"] == "source_error" for key in REQUIRED_MODULES):
+diff --git a/src/norway_company_agent/website.py b/src/norway_company_agent/website.py
+index 30e1bb5..794c2a2 100644
+--- a/src/norway_company_agent/website.py
++++ b/src/norway_company_agent/website.py
+@@ -460,7 +460,19 @@ def fetch_website(url: str | None, *, timeout: float = 15.0, max_bytes: int = 2_
+     normalized = normalize_homepage(url)
+     if not normalized:
+         emit_crawl_event("crawler_completed", organisation_number=organisation_number or "", status="not_found")
+-        return evidence("website", "not_found", "registry_linked_company_website", "https://data.brreg.no/enhetsregisteret/api/enheter", note="No valid registry website URL"), {"requests": 0, "bytes": 0, "latencies_ms": []}
++        brreg_entity_url = (
++            f"https://data.brreg.no/enhetsregisteret/api/enheter/{organisation_number}"
++            if organisation_number
++            else "https://data.brreg.no/enhetsregisteret/api/enheter"
++        )
++        return evidence(
++            "website",
++            "not_found",
++            "official_registry_live",
++            brreg_entity_url,
++            note="Registry field hjemmeside is empty or not a valid URL",
++            source_row_key=organisation_number,
++        ), {"requests": 0, "bytes": 0, "latencies_ms": []}
+     try:
+         assert_public_url(normalized)
+     except ValueError as exc:
+@@ -642,7 +654,7 @@ def fetch_website(url: str | None, *, timeout: float = 15.0, max_bytes: int = 2_
+         record_request(module="website", provider="website/http", operation="GET homepage", success=False, status=exc.code, duration_ms=elapsed, organisation_number=organisation_number, error=f"HTTP {exc.code}")
+         emit_crawl_event("homepage_completed", url=normalized, status="http_error", code=exc.code)
+         emit_crawl_event("crawler_completed", organisation_number=organisation_number or "", status="http_error", url=normalized)
+-        status = "not_found" if exc.code in {404, 410} else "source_error"
++        status = "not_found" if exc.code in {404, 410} else "blocked" if exc.code in {401, 403, 451} else "source_error"
+         return evidence("website", status, "registry_linked_company_website", normalized, note=f"HTTP {exc.code}"), {"requests": 2, "bytes": 0, "latencies_ms": [elapsed]}
+     except urllib.error.URLError as exc:
+         record_request(module="website", provider="website/http", operation="GET homepage", success=False, status=0, duration_ms=int((time.monotonic() - started) * 1000), organisation_number=organisation_number, error="URLError")

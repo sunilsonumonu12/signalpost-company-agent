@@ -36,10 +36,22 @@ python run.py --organisations 1000-companies.jsonl
 
 `run.bat` forwards all command-line arguments to `run.py`. With no arguments, both use `entry-companies.jsonl`.
 
-To include annual-report workforce OCR:
+The standard evaluator command is:
 
 ```bash
+python run.py --organisations <file>
+```
 
+Workforce OCR is optional and not part of the default evaluator command. To include annual-report workforce OCR:
+
+```bash
+python run.py --organisations <file> --include-workforce-ocr
+```
+
+Note: This requires system tools on your `PATH`: Poppler (`pdftoppm`), Tesseract OCR, and the Norwegian language data pack (`nor`). You can diagnose your environment by running:
+
+```bash
+python scripts/check_tesseract.py
 ```
 
 ## 📋 Requirements

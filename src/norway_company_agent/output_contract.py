@@ -364,6 +364,8 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = 
             organisation_number,
             previous_envelope["claims"],
             claims,
+            previous_evidence=previous_envelope.get("evidence") or [],
+            previous_run_id=((previous_envelope.get("run") or {}).get("run_id") or previous_envelope.get("run_id")),
         )
     else:
         computed_changes = []

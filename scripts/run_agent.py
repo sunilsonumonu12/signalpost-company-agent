@@ -118,7 +118,7 @@ def path_sha256(path: Path) -> str:
 
 
 def stage_fingerprint(cmd: list[str], stage_name: str) -> tuple[str, list[str]]:
-    input_options = {"--organisations", "--input", "--profiles", "--cache", "--observations"}
+    input_options = {"--organisations", "--input", "--profiles", "--cache", "--observations", "--previous-envelopes"}
     output_options = {
         "--output", "--profiles-output", "--report", "--progress-file",
         "--jobdir", "--events", "--forensics",
@@ -208,6 +208,7 @@ def main() -> None:
     parser.add_argument("--include-deep-crawl", dest="skip_deep_crawl", action="store_false", help="Enable the crawler (default)")
     parser.add_argument("--skip-workforce-ocr", dest="skip_workforce_ocr", action="store_true", default=True, help="Skip the annual-report OCR workforce stage (default for V1 submission)")
     parser.add_argument("--include-workforce-ocr", dest="skip_workforce_ocr", action="store_false", help="Enable annual-report OCR for V2 work")
+    parser.add_argument("--previous-envelopes", default=None, help="Path to previous envelopes JSONL for change tracking")
     parser.add_argument("--python", default=sys.executable)
     args = parser.parse_args()
 
@@ -404,11 +405,27 @@ def main() -> None:
         if ok:
             stages_run.append("workforce_ocr")
 
+    workforce_report_path = output_dir / "workforce-report.json"
+    ocr_capability_available = False
+    ocr_missing: list[str] = []
+    if not args.skip_workforce_ocr and workforce_report_path.exists():
+        try:
+            wf_data = json.loads(workforce_report_path.read_text(encoding="utf-8"))
+            cap = wf_data.get("ocr_capability") or {}
+            ocr_capability_available = bool(cap.get("available"))
+            ocr_missing = list(cap.get("missing") or [])
+        except (OSError, json.JSONDecodeError):
+            ocr_capability_available = False
+
+    if not args.skip_workforce_ocr and not ocr_capability_available:
+        missing_str = ", ".join(ocr_missing) if ocr_missing else "system dependencies"
+        print(f"OCR unavailable (missing: {missing_str}); workforce OCR limited to text PDFs, prior-year stage skipped.", file=sys.stderr)
+
     # 5b. Prior-year comparative financial figures, recovered from the same
     # annual-report OCR cache the workforce stage just populated -- no new
-    # downloads or OCR, so this only runs if that cache exists.
+    # downloads or OCR, so this only runs if that cache exists and OCR is available.
     prior_year_obs_path = output_dir / "prior-year-financials-observations.jsonl"
-    if not args.skip_workforce_ocr and workforce_cache_dir.exists():
+    if not args.skip_workforce_ocr and workforce_cache_dir.exists() and ocr_capability_available:
         ok = run_stage("prior_year_financials", [
             args.python, str(ARCHIVE_ROOT / "extract_prior_year_financials.py"),
             "--profiles", str(profiles_path),
@@ -418,11 +435,21 @@ def main() -> None:
         ], optional=True)
         if ok:
             stages_run.append("prior_year_financials")
+    elif not args.skip_workforce_ocr and not ocr_capability_available:
+        print("Prior-year stage skipped: workforce OCR capability is unavailable.", file=sys.stderr)
 
     completed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     # 6. Claims/evidence conversion, folding in every observation file collected.
     envelopes_path = output_dir / "envelopes.jsonl"
+    previous_envelopes_path: Path | None = None
+    if args.previous_envelopes:
+        previous_envelopes_path = Path(args.previous_envelopes).resolve()
+        if previous_envelopes_path == envelopes_path.resolve():
+            parser.error("--previous-envelopes cannot point to the current run's envelopes.jsonl output")
+        if not previous_envelopes_path.exists():
+            parser.error(f"--previous-envelopes file {previous_envelopes_path} does not exist")
+
     convert_cmd = [
         args.python, str(ROOT / "build_output_contract.py"),
         "--profiles", str(profiles_path),
@@ -435,6 +462,8 @@ def main() -> None:
     for obs_path in (activity_obs_path, news_obs_path, careers_obs_path, workforce_obs_path, prior_year_obs_path):
         if obs_path.exists():
             convert_cmd += ["--observations", str(obs_path)]
+    if previous_envelopes_path is not None:
+        convert_cmd += ["--previous-envelopes", str(previous_envelopes_path)]
     run_stage("claims_conversion", convert_cmd)
     stages_run.append("claims_conversion")
 

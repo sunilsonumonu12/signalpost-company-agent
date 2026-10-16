@@ -1,0 +1,1692 @@
+diff --git a/README.md b/README.md
+index 327a51c..a606465 100644
+--- a/README.md
++++ b/README.md
+@@ -36,10 +36,22 @@ python run.py --organisations 1000-companies.jsonl
+ 
+ `run.bat` forwards all command-line arguments to `run.py`. With no arguments, both use `entry-companies.jsonl`.
+ 
+-To include annual-report workforce OCR:
++The standard evaluator command is:
+ 
+ ```bash
++python run.py --organisations <file>
++```
++
++Workforce OCR is optional and not part of the default evaluator command. To include annual-report workforce OCR:
+ 
++```bash
++python run.py --organisations <file> --include-workforce-ocr
++```
++
++Note: This requires system tools on your `PATH`: Poppler (`pdftoppm`), Tesseract OCR, and the Norwegian language data pack (`nor`). You can diagnose your environment by running:
++
++```bash
++python scripts/check_tesseract.py
+ ```
+ 
+ ## 📋 Requirements
+diff --git a/archive/v2-crawler/run_annual_report_workforce_connector.py b/archive/v2-crawler/run_annual_report_workforce_connector.py
+index 2ae5210..7e25f3d 100644
+--- a/archive/v2-crawler/run_annual_report_workforce_connector.py
++++ b/archive/v2-crawler/run_annual_report_workforce_connector.py
+@@ -115,6 +115,24 @@ def extract_candidate(text: str) -> tuple[int | float | None, str | None, str, s
+     return chosen[1], chosen[2], "accepted", chosen[3]
+ 
+ 
++def detect_ocr_capability() -> dict[str, Any]:
++    missing = [name for name in ("pdftoppm", "tesseract") if shutil.which(name) is None]
++    if "tesseract" not in missing:
++        try:
++            completed = subprocess.run(
++                ["tesseract", "--list-langs"],
++                capture_output=True,
++                text=True,
++                timeout=15,
++            )
++            languages = {line.strip() for line in completed.stdout.splitlines()[1:] if line.strip()}
++            if "nor" not in languages:
++                missing.append("tesseract-lang:nor")
++        except Exception:
++            missing.append("tesseract-lang:nor")
++    return {"available": not missing, "missing": missing}
++
++
+ def ocr_pdf(pdf_path: Path, *, pages: int, dpi: int) -> str:
+     with tempfile.TemporaryDirectory(prefix="signalpost-annual-ocr-") as temporary:
+         prefix = Path(temporary) / "page"
+@@ -149,7 +167,15 @@ def registry_employee_count(profile: dict) -> object:
+     return None
+ 
+ 
+-def collect(profile: dict, cache_dir: Path, *, ocr_pages: int, ocr_dpi: int) -> tuple[dict | None, dict]:
++def collect(
++    profile: dict,
++    cache_dir: Path,
++    *,
++    ocr_pages: int,
++    ocr_dpi: int,
++    ocr_available: bool = True,
++    ocr_missing: list[str] | None = None,
++) -> tuple[dict | None, dict]:
+     org = str(profile["organisation_number"])
+     registry_count = registry_employee_count(profile)
+     if registry_count is not None and str(registry_count).strip().isdigit():
+@@ -182,20 +208,20 @@ def collect(profile: dict, cache_dir: Path, *, ocr_pages: int, ocr_dpi: int) ->
+         ocr_required = needs_ocr(text) and ocr_pages > 0
+         ocr_used = False
+         ocr_cache_path = cache_dir / f"{org}-{latest['year']}-ocr-{ocr_pages}-{ocr_dpi}.txt"
++        if ocr_required and not ocr_available:
++            return None, {
++                "organisation_number": org,
++                "status": "ocr_unavailable",
++                "error": "OCR required but capability unavailable: " + ", ".join(ocr_missing or ["pdftoppm", "tesseract"]),
++                "missing": list(ocr_missing or []),
++                "report_year": str(latest["year"]),
++                "source_url": url,
++                "pdf_text_characters": text_extraction_chars,
++                "ocr_required": True,
++                "ocr_used": False,
++                "cache_hit": cache_hit,
++            }
+         if ocr_required:
+-            missing_tools = [name for name in ("pdftoppm", "tesseract") if shutil.which(name) is None]
+-            if missing_tools:
+-                return None, {
+-                    "organisation_number": org,
+-                    "status": "error",
+-                    "error": "OCR required but missing executable(s): " + ", ".join(missing_tools),
+-                    "report_year": str(latest["year"]),
+-                    "source_url": url,
+-                    "pdf_text_characters": text_extraction_chars,
+-                    "ocr_required": True,
+-                    "ocr_used": False,
+-                    "cache_hit": cache_hit,
+-                }
+             if ocr_cache_path.exists():
+                 ocr_text = ocr_cache_path.read_text(encoding="utf-8", errors="replace")
+             else:
+@@ -273,10 +299,21 @@ def main() -> None:
+         eligible = eligible[: args.limit]
+     cache_dir = Path(args.cache)
+     cache_dir.mkdir(parents=True, exist_ok=True)
++    ocr_cap = detect_ocr_capability()
++    ocr_available = bool(ocr_cap.get("available"))
++    ocr_missing = list(ocr_cap.get("missing") or [])
+     collected = {}
+     with ThreadPoolExecutor(max_workers=args.workers) as pool:
+         futures = {
+-            pool.submit(collect, profile, cache_dir, ocr_pages=args.ocr_pages, ocr_dpi=args.ocr_dpi): str(profile["organisation_number"])
++            pool.submit(
++                collect,
++                profile,
++                cache_dir,
++                ocr_pages=args.ocr_pages,
++                ocr_dpi=args.ocr_dpi,
++                ocr_available=ocr_available,
++                ocr_missing=ocr_missing,
++            ): str(profile["organisation_number"])
+             for profile in eligible
+         }
+         for future in as_completed(futures):
+@@ -291,6 +328,7 @@ def main() -> None:
+         "connector": "official_annual_report_workforce_v1",
+         "eligible": len(eligible),
+         "accepted": len(observations),
++        "ocr_capability": ocr_cap,
+         "status_counts": statuses,
+         "claim_boundary": "Latest official PDF, exact organisation number in document, company-scope employee phrase only; group phrases and conflicts abstain.",
+         "company_results": company_results,
+diff --git a/phase_1_and_2.patch b/phase_1_and_2.patch
+new file mode 100644
+index 0000000..d29d03a
+--- /dev/null
++++ b/phase_1_and_2.patch
+@@ -0,0 +1,428 @@
++diff --git a/scripts/validate_envelopes.py b/scripts/validate_envelopes.py
++index 82b5abd..48464c8 100644
++--- a/scripts/validate_envelopes.py
+++++ b/scripts/validate_envelopes.py
++@@ -15,6 +15,7 @@ import json
++ import os
++ import re
++ import sys
+++import urllib.parse
++ import uuid
++ from collections import Counter
++ from datetime import datetime, timezone
++@@ -34,10 +35,11 @@ from norway_company_agent.output_contract import (  # noqa: E402
++ )
++ from norway_company_agent.vocabulary import (  # noqa: E402
++     MODULE_KEYS,
+++    PUBLIC_MODULE_STATES,
++     SCHEMA_VERSION,
++     TERMINAL_STATUSES,
++-    derive_terminal_status,
++-    invalid_module_states,
+++    derive_public_terminal_status,
+++    invalid_public_module_states,
++ )
++ 
++ HEX64 = re.compile(r"^[0-9a-f]{64}$")
++@@ -61,6 +63,8 @@ CHECK_NAMES = (
++     "12_terminal_status_consistent_with_modules",
++     "13_expected_count",
++     "14_no_conversion_failures",
+++    "15_available_claims_have_value",
+++    "16_registry_sources_not_company_owned",
++ )
++ 
++ 
++@@ -199,7 +203,7 @@ def check_enums(rows: list[dict[str, Any]]) -> list[str]:
++         status = (row.get("run") or {}).get("terminal_status")
++         if status not in TERMINAL_STATUSES:
++             out.append(f"{org}: terminal_status {status!r} not in {list(TERMINAL_STATUSES)}")
++-        out.extend(f"{org}: {problem}" for problem in invalid_module_states(row.get("modules") or {}))
+++        out.extend(f"{org}: {problem}" for problem in invalid_public_module_states(row.get("modules") or {}))
++         for claim in _claims(row):
++             field = claim.get("field")
++             if claim.get("availability") not in ALLOWED_AVAILABILITY:
++@@ -252,9 +256,9 @@ def check_terminal_status(rows: list[dict[str, Any]]) -> list[str]:
++     out: list[str] = []
++     for row in rows:
++         modules = row.get("modules") or {}
++-        if invalid_module_states(modules):
+++        if invalid_public_module_states(modules):
++             continue  # check 8 already reports it
++-        expected = derive_terminal_status(modules)
+++        expected = derive_public_terminal_status(modules)
++         actual = (row.get("run") or {}).get("terminal_status")
++         if actual != expected:
++             out.append(f"{_org(row)}: terminal_status {actual!r} but modules imply {expected!r}")
++@@ -277,6 +281,34 @@ def check_conversion_failures(rows: list[dict[str, Any]]) -> list[str]:
++     ]
++ 
++ 
+++def check_available_claims_have_value(rows: list[dict[str, Any]]) -> list[str]:
+++    out: list[str] = []
+++    for row in rows:
+++        org = _org(row)
+++        for claim in _claims(row):
+++            if claim.get("availability") == "available":
+++                val = claim.get("value")
+++                field = claim.get("field")
+++                if val is None or (isinstance(val, str) and not val.strip()) or (isinstance(val, dict) and not val):
+++                    out.append(f"{org}: claim {field!r} is available but has empty/null value: {val!r}")
+++    return out
+++
+++
+++def check_registry_sources_not_company_owned(rows: list[dict[str, Any]]) -> list[str]:
+++    out: list[str] = []
+++    for row in rows:
+++        org = _org(row)
+++        for item in _evidence_items(row):
+++            url = str(item.get("source_url") or "")
+++            host = (urllib.parse.urlparse(url).hostname or "").lower()
+++            source_class = item.get("source_class")
+++            if (host == "brreg.no" or host.endswith(".brreg.no")) and source_class == "company_owned":
+++                out.append(
+++                    f"{org}: evidence {item.get('id')!r} from host {host!r} has source_class 'company_owned'"
+++                )
+++    return out
+++
+++
++ def validate(rows: list[dict[str, Any]], *, run_id: str | None = None, expected_count: int | None = None) -> dict[str, list[str]]:
++     results = {
++         CHECK_NAMES[0]: check_row_keysets(rows),
++@@ -293,6 +325,8 @@ def validate(rows: list[dict[str, Any]], *, run_id: str | None = None, expected_
++         CHECK_NAMES[11]: check_terminal_status(rows),
++         CHECK_NAMES[12]: check_expected_count(rows, expected_count),
++         CHECK_NAMES[13]: check_conversion_failures(rows),
+++        CHECK_NAMES[14]: check_available_claims_have_value(rows),
+++        CHECK_NAMES[15]: check_registry_sources_not_company_owned(rows),
++     }
++     return results
++ 
++diff --git a/src/norway_company_agent/official.py b/src/norway_company_agent/official.py
++index 8793fa6..c74630b 100644
++--- a/src/norway_company_agent/official.py
+++++ b/src/norway_company_agent/official.py
++@@ -207,6 +207,8 @@ def normalize_entity(body: Any) -> dict[str, Any]:
++ 
++ 
++ def _classified(field: str, source_type: str, result: FetchResult, value: Any = None) -> dict[str, Any]:
+++    if result.status == 200 and result.error:
+++        return evidence(field, "source_error", source_type, result.url, note=result.error, content_sha256=result.content_sha256, retrieved_at=result.retrieved_at, effective_at=result.effective_at)
++     if result.status == 200:
++         return evidence(field, "available", source_type, result.url, value=result.body if value is None else value, content_sha256=result.content_sha256, retrieved_at=result.retrieved_at, effective_at=result.effective_at)
++     if result.status in {404, 410}:
++diff --git a/src/norway_company_agent/output_contract.py b/src/norway_company_agent/output_contract.py
++index ae07875..9deeb25 100644
++--- a/src/norway_company_agent/output_contract.py
+++++ b/src/norway_company_agent/output_contract.py
++@@ -1,9 +1,17 @@
++ from __future__ import annotations
++ 
++ from typing import Any
+++import urllib.parse
++ 
++ from .changes import diff_claims
++-from .vocabulary import MODULE_KEYS, SCHEMA_VERSION, derive_terminal_status, module_states
+++from .vocabulary import (
+++    MODULE_KEYS,
+++    SCHEMA_VERSION,
+++    derive_public_terminal_status,
+++    derive_terminal_status,
+++    module_states,
+++    public_module_states,
+++)
++ from .website import normalize_website_value
++ 
++ 
++@@ -196,6 +204,26 @@ PUBLIC_RUN_KEYS = ("run_id", "started_at", "completed_at", "terminal_status")
++ PUBLIC_EVIDENCE_KEYS = ("id", "source_url", "source_class", "retrieved_at", "content_sha256", "claim_span")
++ 
++ 
+++def _is_missing_value(value: Any) -> bool:
+++    if value is None:
+++        return True
+++    if isinstance(value, str) and not value.strip():
+++        return True
+++    if isinstance(value, dict) and not value:
+++        return True
+++    return False
+++
+++
+++def _public_source_class(record: dict[str, Any]) -> str:
+++    raw = str(record.get("source_class") or record.get("source_type") or "unknown")
+++    host = (urllib.parse.urlparse(str(record.get("source_url") or "")).hostname or "").lower()
+++    if host == "brreg.no" or host.endswith(".brreg.no"):
+++        return raw if raw.startswith("official_") else "official_registry_live"
+++    elif raw in {"registry_linked_company_website", "company_site"}:
+++        return "company_owned"
+++    return raw
+++
+++
++ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = None, previous_envelope: dict[str, Any] | None = None) -> dict[str, Any]:
++     profile = row.get("profile") if isinstance(row.get("profile"), dict) else row
++     organisation_number = str(profile.get("organisation_number") or row.get("organisation_number") or "")
++@@ -217,9 +245,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
++             return evidence_ids[key]
++         item_id = f"ev-{organisation_number}-{len(evidence_items)}"
++         evidence_ids[key] = item_id
++-        source_class = str(record.get("source_class") or record.get("source_type") or "unknown")
++-        if source_class in {"registry_linked_company_website", "company_site"}:
++-            source_class = "company_owned"
+++        source_class = _public_source_class(record)
++         item = {
++             "id": item_id,
++             "source_url": str(record.get("source_url") or ""),
++@@ -245,9 +271,11 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
++                 availability=availability,
++             )
++             for field, path in REGISTRY_CLAIM_FIELDS:
+++                val = _nested_get(registry_value, path) if availability == "available" else None
+++                field_avail = "not_available" if availability == "available" and _is_missing_value(val) else availability
++                 claims.append(_claim(
++-                    field, _nested_get(registry_value, path) if availability == "available" else None,
++-                    availability, _confidence(availability, official=True), [registry_id],
+++                    field, val if field_avail != "not_available" else None,
+++                    field_avail, _confidence(field_avail, official=True), [registry_id],
++                 ))
++             _append_error(errors, "registry_live", registry, availability)
++ 
++@@ -320,7 +348,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
++         claims.append(_claim(field, value, availability, _confidence(availability), [evidence_id]))
++ 
++     claims = _complete_claims(claims)
++-    modules = module_states(profile)
+++    modules = public_module_states(profile)
++     ops = _operations(metrics, profile)
++ 
++     # Compute changes[] by comparing current normalized claims against the
++@@ -347,7 +375,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
++             "run_id": str(row.get("run_id") or ""),
++             "started_at": str(row.get("started_at") or ""),
++             "completed_at": str(row.get("completed_at") or ""),
++-            "terminal_status": derive_terminal_status(modules),
+++            "terminal_status": derive_public_terminal_status(modules),
++         },
++         "modules": modules,
++         "claims": claims,
++@@ -385,10 +413,10 @@ def conversion_failure_envelope(row: dict[str, Any], error: Exception) -> dict[s
++     profile = row.get("profile") if isinstance(row.get("profile"), dict) else row
++     organisation_number = str(profile.get("organisation_number") or row.get("organisation_number") or "")
++     try:
++-        modules = module_states(profile)
+++        modules = public_module_states(profile)
++     except Exception:
++         # The profile itself is unreadable (for example an unknown evidence status).
++-        modules = {key: {"state": "source_error", "retry_count": 0} for key in MODULE_KEYS}
+++        modules = {key: {"state": "failed", "retry_count": 0} for key in MODULE_KEYS}
++     return {
++         "schema_version": SCHEMA_VERSION,
++         "organisation_number": organisation_number,
++@@ -436,6 +464,10 @@ def _is_empty_checked(field: str, value: Any) -> bool:
++         return isinstance(value.get("locations"), list) and not value["locations"]
++     if field == "roles" and isinstance(value, dict):
++         return isinstance(value.get("roles"), list) and not value["roles"]
+++    if field == "financials" and isinstance(value, dict):
+++        return isinstance(value.get("records"), list) and not value["records"]
+++    if field == "financial_history" and isinstance(value, dict):
+++        return isinstance(value.get("years"), list) and not value["years"]
++     return False
++ 
++ 
++@@ -502,6 +534,10 @@ def _claim(
++ ) -> dict[str, Any]:
++     if availability not in ALLOWED_AVAILABILITY:
++         availability = "failed"
+++    if availability == "available" and _is_missing_value(value):
+++        availability = "not_available"
+++        value = None
+++        confidence = None
++     return {
++         "field": field,
++         "value": value,
++diff --git a/src/norway_company_agent/vocabulary.py b/src/norway_company_agent/vocabulary.py
++index 555b47c..eb51806 100644
++--- a/src/norway_company_agent/vocabulary.py
+++++ b/src/norway_company_agent/vocabulary.py
++@@ -98,6 +98,148 @@ def module_states(profile: dict[str, Any]) -> dict[str, dict[str, Any]]:
++     return states
++ 
++ 
+++PUBLIC_MODULE_STATES: tuple[str, ...] = (
+++    "available",
+++    "not_available",
+++    "blocked",
+++    "not_applicable",
+++    "ambiguous",
+++    "failed",
+++)
+++
+++WEBSITE_IDENTITY_MODULES: tuple[str, ...] = ("website", "website_discovered")
+++
+++
+++def _identity_assessment(record: dict[str, Any] | None) -> dict[str, Any] | None:
+++    if not isinstance(record, dict):
+++        return None
+++    val = record.get("value")
+++    if not isinstance(val, dict):
+++        return None
+++    assessment = val.get("identity_assessment")
+++    if isinstance(assessment, dict) and assessment:
+++        return assessment
+++    return None
+++
+++
+++def public_module_state(
+++    internal: dict[str, Any],
+++    *,
+++    module: str = "",
+++    record: dict[str, Any] | None = None,
+++    website_internal_state: str = "",
+++) -> dict[str, Any]:
+++    """Map one internal module state dict onto the public 6-state vocabulary."""
+++    if not isinstance(internal, dict):
+++        raise UnknownModuleStatusError(
+++            f"module {module!r}: internal state is not a dict: {internal!r}"
+++        )
+++    status = internal.get("state")
+++    if status not in MODULE_STATES:
+++        raise UnknownModuleStatusError(
+++            f"module {module!r}: unknown internal module state {status!r}; "
+++            f"allowed: {list(MODULE_STATES)}"
+++        )
+++
+++    retry_count = int(internal.get("retry_count") or 0)
+++
+++    if status == "available":
+++        if module in WEBSITE_IDENTITY_MODULES:
+++            assessment = _identity_assessment(record)
+++            if assessment is not None and assessment.get("publishable") is False:
+++                pub_state = "ambiguous"
+++            else:
+++                pub_state = "available"
+++        else:
+++            pub_state = "available"
+++    elif status == "not_found":
+++        pub_state = "not_available"
+++    elif status == "not_applicable":
+++        pub_state = "not_applicable"
+++    elif status == "blocked":
+++        pub_state = "blocked"
+++    elif status == "source_error":
+++        if module in WEBSITE_IDENTITY_MODULES:
+++            assessment = _identity_assessment(record)
+++            if assessment is not None and assessment.get("decision") == "REJECT":
+++                pub_state = "not_available"
+++            else:
+++                pub_state = "failed"
+++        else:
+++            pub_state = "failed"
+++    elif status == "not_fetched":
+++        if module in ("website_discovery", "website_discovered") and website_internal_state == "available":
+++            pub_state = "not_applicable"
+++        elif module in REQUIRED_MODULES:
+++            pub_state = "failed"
+++        else:
+++            pub_state = "not_available"
+++    else:
+++        raise UnknownModuleStatusError(
+++            f"module {module!r}: unhandled internal state {status!r}"
+++        )
+++
+++    out: dict[str, Any] = {"state": pub_state, "retry_count": retry_count}
+++    if pub_state == "blocked":
+++        out["reason"] = internal.get("reason") or "policy"
+++    return out
+++
+++
+++def public_module_states(profile: dict[str, Any]) -> dict[str, dict[str, Any]]:
+++    """Uniform module states for one profile, mapped to the public 6-state vocabulary."""
+++    internals = module_states(profile)
+++    records = profile.get("evidence") if isinstance(profile.get("evidence"), dict) else {}
+++    website_internal = internals.get("website", {}).get("state", "")
+++    states: dict[str, dict[str, Any]] = {}
+++    for key in MODULE_KEYS:
+++        internal = internals[key]
+++        raw_record = records.get(key)
+++        states[key] = public_module_state(
+++            internal,
+++            module=key,
+++            record=raw_record,
+++            website_internal_state=website_internal,
+++        )
+++    return states
+++
+++
+++def derive_public_terminal_status(states: dict[str, dict[str, Any]]) -> str:
+++    """completed | completed_with_gaps | failed, derived from public module states."""
+++    if any(states[key]["state"] == "failed" for key in REQUIRED_MODULES):
+++        return "failed"
+++    for key in COVERAGE_MODULES:
+++        state = states[key]["state"]
+++        if state in {"not_available", "blocked", "ambiguous"} or (key not in REQUIRED_MODULES and state == "failed"):
+++            return "completed_with_gaps"
+++    return "completed"
+++
+++
+++def invalid_public_module_states(states: dict[str, Any]) -> list[str]:
+++    """Violations for one public `modules` mapping (used by validators)."""
+++    problems: list[str] = []
+++    if tuple(states) != MODULE_KEYS:
+++        missing = [key for key in MODULE_KEYS if key not in states]
+++        extra = [key for key in states if key not in MODULE_KEYS]
+++        problems.append(f"module keys differ from fixed list (missing={missing}, extra={extra})")
+++    for key, item in states.items():
+++        if not isinstance(item, dict):
+++            problems.append(f"module {key!r} is not an object")
+++            continue
+++        state = item.get("state")
+++        if state not in PUBLIC_MODULE_STATES:
+++            problems.append(f"module {key!r} has state {state!r} outside {list(PUBLIC_MODULE_STATES)}")
+++        reason = item.get("reason")
+++        if state == "blocked" and reason not in BLOCKED_REASONS:
+++            problems.append(f"module {key!r} is blocked with reason {reason!r}; allowed {list(BLOCKED_REASONS)}")
+++        if state != "blocked" and "reason" in item:
+++            problems.append(f"module {key!r} has a reason but state is {state!r}")
+++        retry = item.get("retry_count")
+++        if not isinstance(retry, int) or isinstance(retry, bool) or retry < 0:
+++            problems.append(f"module {key!r} retry_count {retry!r} is not a non-negative integer")
+++    return problems
+++
+++
+++
++ def derive_terminal_status(states: dict[str, dict[str, Any]]) -> str:
++     """completed | completed_with_gaps | failed, derived from module states only."""
++     if any(states[key]["state"] == "source_error" for key in REQUIRED_MODULES):
++diff --git a/src/norway_company_agent/website.py b/src/norway_company_agent/website.py
++index 30e1bb5..794c2a2 100644
++--- a/src/norway_company_agent/website.py
+++++ b/src/norway_company_agent/website.py
++@@ -460,7 +460,19 @@ def fetch_website(url: str | None, *, timeout: float = 15.0, max_bytes: int = 2_
++     normalized = normalize_homepage(url)
++     if not normalized:
++         emit_crawl_event("crawler_completed", organisation_number=organisation_number or "", status="not_found")
++-        return evidence("website", "not_found", "registry_linked_company_website", "https://data.brreg.no/enhetsregisteret/api/enheter", note="No valid registry website URL"), {"requests": 0, "bytes": 0, "latencies_ms": []}
+++        brreg_entity_url = (
+++            f"https://data.brreg.no/enhetsregisteret/api/enheter/{organisation_number}"
+++            if organisation_number
+++            else "https://data.brreg.no/enhetsregisteret/api/enheter"
+++        )
+++        return evidence(
+++            "website",
+++            "not_found",
+++            "official_registry_live",
+++            brreg_entity_url,
+++            note="Registry field hjemmeside is empty or not a valid URL",
+++            source_row_key=organisation_number,
+++        ), {"requests": 0, "bytes": 0, "latencies_ms": []}
++     try:
++         assert_public_url(normalized)
++     except ValueError as exc:
++@@ -642,7 +654,7 @@ def fetch_website(url: str | None, *, timeout: float = 15.0, max_bytes: int = 2_
++         record_request(module="website", provider="website/http", operation="GET homepage", success=False, status=exc.code, duration_ms=elapsed, organisation_number=organisation_number, error=f"HTTP {exc.code}")
++         emit_crawl_event("homepage_completed", url=normalized, status="http_error", code=exc.code)
++         emit_crawl_event("crawler_completed", organisation_number=organisation_number or "", status="http_error", url=normalized)
++-        status = "not_found" if exc.code in {404, 410} else "source_error"
+++        status = "not_found" if exc.code in {404, 410} else "blocked" if exc.code in {401, 403, 451} else "source_error"
++         return evidence("website", status, "registry_linked_company_website", normalized, note=f"HTTP {exc.code}"), {"requests": 2, "bytes": 0, "latencies_ms": [elapsed]}
++     except urllib.error.URLError as exc:
++         record_request(module="website", provider="website/http", operation="GET homepage", success=False, status=0, duration_ms=int((time.monotonic() - started) * 1000), organisation_number=organisation_number, error="URLError")
+diff --git a/run.py b/run.py
+index 50c483c..3cca08e 100644
+--- a/run.py
++++ b/run.py
+@@ -272,6 +272,11 @@ def main() -> int:
+         type=Path,
+         help="Rebuild envelopes from a profiles or fat-envelope JSONL without rerunning collection. Public envelopes carry no profile and are rejected.",
+     )
++    parser.add_argument(
++        "--previous-envelopes",
++        type=Path,
++        help="Path to previous envelopes JSONL file for change tracking.",
++    )
+     parser.add_argument("--include-workforce-ocr", dest="skip_workforce_ocr", action="store_false", default=True,
+                         help="Enable annual-report OCR workforce extraction (default: disabled).")
+     parser.add_argument("--skip-workforce-ocr", dest="skip_workforce_ocr", action="store_true",
+@@ -287,6 +292,37 @@ def main() -> int:
+     if args.run_id and not valid_run_id(args.run_id):
+         parser.error("--run-id may contain only letters, digits, dot, underscore, and hyphen")
+ 
++    previous_envelopes = args.previous_envelopes
++    preserved_previous: Path | None = None
++    if previous_envelopes is not None:
++        if not previous_envelopes.is_absolute():
++            previous_envelopes = PROJECT_ROOT / previous_envelopes
++        if not previous_envelopes.exists():
++            parser.error(f"--previous-envelopes file not found: {previous_envelopes}")
++
++    def preserve_previous_if_needed() -> Path | None:
++        nonlocal previous_envelopes
++        if previous_envelopes is None:
++            return None
++        is_inside = False
++        try:
++            previous_envelopes.resolve().relative_to(OUT_DIR.resolve())
++            is_inside = True
++        except ValueError:
++            pass
++        if not is_inside:
++            try:
++                if previous_envelopes.resolve() == RESULT_FILE.resolve():
++                    is_inside = True
++            except Exception:
++                pass
++        if is_inside:
++            temp_prev = PROJECT_ROOT / f".prev-envelopes-{uuid.uuid4().hex}.jsonl"
++            shutil.copy2(previous_envelopes, temp_prev)
++            previous_envelopes = temp_prev
++            return temp_prev
++        return None
++
+     if args.source_envelopes:
+         source = args.source_envelopes
+         if not source.is_absolute():
+@@ -294,6 +330,7 @@ def main() -> int:
+         if not source.exists():
+             parser.error(f"Source envelope file not found: {source}")
+         if args.fresh:
++            preserved_previous = preserve_previous_if_needed()
+             # Preserve an input stored under out/ long enough to convert it.
+             preserved_source: Path | None = None
+             try:
+@@ -320,6 +357,8 @@ def main() -> int:
+             "--report",
+             str(WORK_DIR / "source-contract-report.json"),
+         ]
++        if previous_envelopes is not None:
++            command.extend(["--previous-envelopes", str(previous_envelopes)])
+         try:
+             completed = subprocess.run(command, cwd=PROJECT_ROOT, capture_output=True, text=True)
+             if completed.returncode != 0:
+@@ -333,6 +372,8 @@ def main() -> int:
+         finally:
+             if args.fresh and 'preserved_source' in locals() and preserved_source is not None:
+                 preserved_source.unlink(missing_ok=True)
++            if preserved_previous is not None:
++                preserved_previous.unlink(missing_ok=True)
+ 
+     organisations = args.organisations
+     if not organisations.is_absolute():
+@@ -351,6 +392,7 @@ def main() -> int:
+         parser.error("--progress-interval must be positive")
+ 
+     if args.fresh:
++        preserved_previous = preserve_previous_if_needed()
+         try:
+             organisations.resolve().relative_to(OUT_DIR.resolve())
+         except ValueError:
+@@ -402,60 +444,66 @@ def main() -> int:
+         command.append("--include-workforce-ocr")
+     if not args.skip_deep_crawl:
+         command.append("--include-deep-crawl")
++    if previous_envelopes is not None:
++        command.extend(["--previous-envelopes", str(previous_envelopes)])
+ 
+-    return_code, progress, elapsed = run_with_progress(
+-        command,
+-        expected_count=expected_count,
+-        progress_interval=args.progress_interval,
+-    )
+-    source = WORK_DIR / "envelopes.jsonl"
+-    envelopes_produced = source.exists()
+-    produced_envelope_count = 0
+-    if envelopes_produced:
+-        try:
+-            produced_envelope_count = sum(1 for line in source.read_text(encoding="utf-8").splitlines() if line.strip())
+-        except OSError:
+-            produced_envelope_count = 0
+-    if return_code != 0 and envelopes_produced and produced_envelope_count >= expected_count:
+-        print(
+-            f"[{datetime.now().strftime('%H:%M:%S')}] NOTICE | RETURN-CODE OVERRIDE: subprocess exited "
+-            f"with code {return_code}, but {produced_envelope_count}/{expected_count} envelopes exist; "
+-            "treating the run as completed-with-failures.",
+-            file=sys.stderr,
+-            flush=True,
++    try:
++        return_code, progress, elapsed = run_with_progress(
++            command,
++            expected_count=expected_count,
++            progress_interval=args.progress_interval,
+         )
+-        return_code = 0
+-    if return_code != 0:
+-        print_final_summary(success=False, expected_count=expected_count, state=progress, elapsed=elapsed, return_code=return_code)
+-        if source.exists():
+-            produced_envelope_count = sum(1 for line in source.read_text(encoding="utf-8").splitlines() if line.strip())
++        source = WORK_DIR / "envelopes.jsonl"
++        envelopes_produced = source.exists()
++        produced_envelope_count = 0
++        if envelopes_produced:
++            try:
++                produced_envelope_count = sum(1 for line in source.read_text(encoding="utf-8").splitlines() if line.strip())
++            except OSError:
++                produced_envelope_count = 0
++        if return_code != 0 and envelopes_produced and produced_envelope_count >= expected_count:
+             print(
+-                f"Run reported failure but {produced_envelope_count} envelopes exist at {source}. "
+-                f"Intermediate files kept in {WORK_DIR}",
++                f"[{datetime.now().strftime('%H:%M:%S')}] NOTICE | RETURN-CODE OVERRIDE: subprocess exited "
++                f"with code {return_code}, but {produced_envelope_count}/{expected_count} envelopes exist; "
++                "treating the run as completed-with-failures.",
+                 file=sys.stderr,
++                flush=True,
+             )
+-            if produced_envelope_count:
+-                atomic_copy_file(source, RESULT_FILE)
+-                print(f"Partial envelope output preserved at {RESULT_FILE}", file=sys.stderr)
+-                publish_validation_report()
+-        else:
+-            print(f"Run failed. Intermediate files were kept in {WORK_DIR}", file=sys.stderr)
+-        return return_code
+-
+-    if not envelopes_produced:
+-        print(f"Run finished but envelope file was not created: {source}", file=sys.stderr)
+-        return 1
+-    atomic_copy_file(source, RESULT_FILE)
+-    publish_validation_report()
+-    print_final_summary(success=True, expected_count=expected_count, state=progress, elapsed=elapsed, return_code=0)
+-    if produced_envelope_count != expected_count:
+-        print(
+-            f"[{datetime.now().strftime('%H:%M:%S')}] WARNING | envelope count mismatch "
+-            f"({produced_envelope_count} vs expected {expected_count}); copied to result anyway.",
+-            file=sys.stderr,
+-        )
+-    print(f"Final output: {RESULT_FILE}")
+-    return 0
++            return_code = 0
++        if return_code != 0:
++            print_final_summary(success=False, expected_count=expected_count, state=progress, elapsed=elapsed, return_code=return_code)
++            if source.exists():
++                produced_envelope_count = sum(1 for line in source.read_text(encoding="utf-8").splitlines() if line.strip())
++                print(
++                    f"Run reported failure but {produced_envelope_count} envelopes exist at {source}. "
++                    f"Intermediate files kept in {WORK_DIR}",
++                    file=sys.stderr,
++                )
++                if produced_envelope_count:
++                    atomic_copy_file(source, RESULT_FILE)
++                    print(f"Partial envelope output preserved at {RESULT_FILE}", file=sys.stderr)
++                    publish_validation_report()
++            else:
++                print(f"Run failed. Intermediate files were kept in {WORK_DIR}", file=sys.stderr)
++            return return_code
++
++        if not envelopes_produced:
++            print(f"Run finished but envelope file was not created: {source}", file=sys.stderr)
++            return 1
++        atomic_copy_file(source, RESULT_FILE)
++        publish_validation_report()
++        print_final_summary(success=True, expected_count=expected_count, state=progress, elapsed=elapsed, return_code=0)
++        if produced_envelope_count != expected_count:
++            print(
++                f"[{datetime.now().strftime('%H:%M:%S')}] WARNING | envelope count mismatch "
++                f"({produced_envelope_count} vs expected {expected_count}); copied to result anyway.",
++                file=sys.stderr,
++            )
++        print(f"Final output: {RESULT_FILE}")
++        return 0
++    finally:
++        if preserved_previous is not None:
++            preserved_previous.unlink(missing_ok=True)
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/scripts/build_output_contract.py b/scripts/build_output_contract.py
+index 0448e77..c11fd5b 100644
+--- a/scripts/build_output_contract.py
++++ b/scripts/build_output_contract.py
+@@ -93,6 +93,64 @@ def build_fat(
+     )
+ 
+ 
++def load_previous_envelopes(path: Path | str | None) -> dict[str, dict]:
++    """Load previous envelopes by organisation number for change detection."""
++    if not path:
++        return {}
++    p = Path(path)
++    if not p.exists():
++        print(f"Warning: --previous-envelopes file {p} does not exist", file=sys.stderr)
++        return {}
++
++    bad_lines = 0
++    org_map: dict[str, dict] = {}
++    duplicates: set[str] = set()
++
++    for line in p.read_text(encoding="utf-8").splitlines():
++        line = line.strip()
++        if not line:
++            continue
++        try:
++            row = json.loads(line)
++        except Exception:
++            bad_lines += 1
++            continue
++        if not isinstance(row, dict):
++            bad_lines += 1
++            continue
++
++        org = str(row.get("organisation_number") or (row.get("profile") or {}).get("organisation_number") or "")
++        if not org:
++            bad_lines += 1
++            continue
++
++        if org in org_map or org in duplicates:
++            duplicates.add(org)
++            org_map.pop(org, None)
++            continue
++
++        if isinstance(row.get("claims"), list):
++            org_map[org] = row
++        elif isinstance(row.get("profile"), dict):
++            try:
++                derived = to_public_envelope(row)
++                org_map[org] = derived
++            except Exception as exc:
++                print(f"Warning: could not derive claims for previous org {org}: {exc}", file=sys.stderr)
++                continue
++        else:
++            bad_lines += 1
++
++    if duplicates:
++        for dup in sorted(duplicates):
++            print(f"Warning: duplicate organisation number {dup} in previous envelopes; skipping org for changes", file=sys.stderr)
++
++    if bad_lines:
++        print(f"Warning: skipped {bad_lines} unparseable or invalid line(s) in previous envelopes", file=sys.stderr)
++
++    return org_map
++
++
+ def build_envelope(
+     row: dict,
+     *,
+@@ -101,6 +159,7 @@ def build_envelope(
+     completed_at: str,
+     observations: list[dict],
+     envelope_format: str = "public",
++    previous_envelope: dict | None = None,
+ ) -> dict:
+     if envelope_format not in ENVELOPE_FORMATS:
+         raise ValueError(f"envelope_format must be one of {ENVELOPE_FORMATS}, got {envelope_format!r}")
+@@ -109,7 +168,7 @@ def build_envelope(
+     )
+     if envelope_format == "fat":
+         return attach_claims(fat)
+-    return to_public_envelope(fat)
++    return to_public_envelope(fat, previous_envelope=previous_envelope)
+ 
+ 
+ def is_public_envelope(row: dict) -> bool:
+@@ -130,6 +189,7 @@ def main() -> int:
+         "--envelope-format", choices=ENVELOPE_FORMATS, default="public",
+         help="public: claims-based output (default). fat: legacy envelope with the full profile.",
+     )
++    p.add_argument("--previous-envelopes", help="Optional path to previous envelopes JSONL")
+     args = p.parse_args()
+ 
+     source_path = Path(args.input or args.profiles or "")
+@@ -141,6 +201,8 @@ def main() -> int:
+     output_path = Path(args.output)
+     report_path = Path(args.report) if args.report else output_path.parent / "contract-report.json"
+ 
++    previous_envelopes = load_previous_envelopes(args.previous_envelopes) if args.previous_envelopes else {}
++
+     rows = read_jsonl(source_path)
+     public_rows = [row for row in rows if is_public_envelope(row)]
+     if public_rows:
+@@ -155,6 +217,7 @@ def main() -> int:
+         organisation_number = str(
+             row.get("organisation_number") or (row.get("profile") or {}).get("organisation_number") or ""
+         )
++        prev_env = previous_envelopes.get(organisation_number)
+         try:
+             envelope = build_envelope(
+                 row,
+@@ -163,6 +226,7 @@ def main() -> int:
+                 completed_at=args.completed_at,
+                 observations=observations.get(organisation_number, []),
+                 envelope_format=args.envelope_format,
++                previous_envelope=prev_env,
+             )
+         except Exception as exc:
+             # Stage 6 is batch-critical, but a malformed company must not prevent
+@@ -204,6 +268,7 @@ def main() -> int:
+     status_counts: dict[str, int] = {}
+     for item in envelopes:
+         status_counts[status_of(item)] = status_counts.get(status_of(item), 0) + 1
++    changes_total = sum(len(item.get("changes") or []) for item in envelopes)
+     atomic_write_text(
+         report_path,
+         json.dumps(
+@@ -216,6 +281,9 @@ def main() -> int:
+                 "terminal_status_counts": status_counts,
+                 "claims_failed": len(claims_failed_orgs),
+                 "claims_failed_orgs": claims_failed_orgs,
++                "previous_envelopes": str(args.previous_envelopes) if args.previous_envelopes else None,
++                "previous_envelopes_loaded": len(previous_envelopes),
++                "changes_total": changes_total,
+             },
+             ensure_ascii=False,
+             indent=2,
+diff --git a/scripts/run_agent.py b/scripts/run_agent.py
+index f6718cf..400c8fd 100644
+--- a/scripts/run_agent.py
++++ b/scripts/run_agent.py
+@@ -118,7 +118,7 @@ def path_sha256(path: Path) -> str:
+ 
+ 
+ def stage_fingerprint(cmd: list[str], stage_name: str) -> tuple[str, list[str]]:
+-    input_options = {"--organisations", "--input", "--profiles", "--cache", "--observations"}
++    input_options = {"--organisations", "--input", "--profiles", "--cache", "--observations", "--previous-envelopes"}
+     output_options = {
+         "--output", "--profiles-output", "--report", "--progress-file",
+         "--jobdir", "--events", "--forensics",
+@@ -208,6 +208,7 @@ def main() -> None:
+     parser.add_argument("--include-deep-crawl", dest="skip_deep_crawl", action="store_false", help="Enable the crawler (default)")
+     parser.add_argument("--skip-workforce-ocr", dest="skip_workforce_ocr", action="store_true", default=True, help="Skip the annual-report OCR workforce stage (default for V1 submission)")
+     parser.add_argument("--include-workforce-ocr", dest="skip_workforce_ocr", action="store_false", help="Enable annual-report OCR for V2 work")
++    parser.add_argument("--previous-envelopes", default=None, help="Path to previous envelopes JSONL for change tracking")
+     parser.add_argument("--python", default=sys.executable)
+     args = parser.parse_args()
+ 
+@@ -404,11 +405,27 @@ def main() -> None:
+         if ok:
+             stages_run.append("workforce_ocr")
+ 
++    workforce_report_path = output_dir / "workforce-report.json"
++    ocr_capability_available = False
++    ocr_missing: list[str] = []
++    if not args.skip_workforce_ocr and workforce_report_path.exists():
++        try:
++            wf_data = json.loads(workforce_report_path.read_text(encoding="utf-8"))
++            cap = wf_data.get("ocr_capability") or {}
++            ocr_capability_available = bool(cap.get("available"))
++            ocr_missing = list(cap.get("missing") or [])
++        except (OSError, json.JSONDecodeError):
++            ocr_capability_available = False
++
++    if not args.skip_workforce_ocr and not ocr_capability_available:
++        missing_str = ", ".join(ocr_missing) if ocr_missing else "system dependencies"
++        print(f"OCR unavailable (missing: {missing_str}); workforce OCR limited to text PDFs, prior-year stage skipped.", file=sys.stderr)
++
+     # 5b. Prior-year comparative financial figures, recovered from the same
+     # annual-report OCR cache the workforce stage just populated -- no new
+-    # downloads or OCR, so this only runs if that cache exists.
++    # downloads or OCR, so this only runs if that cache exists and OCR is available.
+     prior_year_obs_path = output_dir / "prior-year-financials-observations.jsonl"
+-    if not args.skip_workforce_ocr and workforce_cache_dir.exists():
++    if not args.skip_workforce_ocr and workforce_cache_dir.exists() and ocr_capability_available:
+         ok = run_stage("prior_year_financials", [
+             args.python, str(ARCHIVE_ROOT / "extract_prior_year_financials.py"),
+             "--profiles", str(profiles_path),
+@@ -418,11 +435,21 @@ def main() -> None:
+         ], optional=True)
+         if ok:
+             stages_run.append("prior_year_financials")
++    elif not args.skip_workforce_ocr and not ocr_capability_available:
++        print("Prior-year stage skipped: workforce OCR capability is unavailable.", file=sys.stderr)
+ 
+     completed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+ 
+     # 6. Claims/evidence conversion, folding in every observation file collected.
+     envelopes_path = output_dir / "envelopes.jsonl"
++    previous_envelopes_path: Path | None = None
++    if args.previous_envelopes:
++        previous_envelopes_path = Path(args.previous_envelopes).resolve()
++        if previous_envelopes_path == envelopes_path.resolve():
++            parser.error("--previous-envelopes cannot point to the current run's envelopes.jsonl output")
++        if not previous_envelopes_path.exists():
++            parser.error(f"--previous-envelopes file {previous_envelopes_path} does not exist")
++
+     convert_cmd = [
+         args.python, str(ROOT / "build_output_contract.py"),
+         "--profiles", str(profiles_path),
+@@ -435,6 +462,8 @@ def main() -> None:
+     for obs_path in (activity_obs_path, news_obs_path, careers_obs_path, workforce_obs_path, prior_year_obs_path):
+         if obs_path.exists():
+             convert_cmd += ["--observations", str(obs_path)]
++    if previous_envelopes_path is not None:
++        convert_cmd += ["--previous-envelopes", str(previous_envelopes_path)]
+     run_stage("claims_conversion", convert_cmd)
+     stages_run.append("claims_conversion")
+ 
+diff --git a/scripts/validate_envelopes.py b/scripts/validate_envelopes.py
+index 82b5abd..a3f246c 100644
+--- a/scripts/validate_envelopes.py
++++ b/scripts/validate_envelopes.py
+@@ -15,6 +15,7 @@ import json
+ import os
+ import re
+ import sys
++import urllib.parse
+ import uuid
+ from collections import Counter
+ from datetime import datetime, timezone
+@@ -34,10 +35,11 @@ from norway_company_agent.output_contract import (  # noqa: E402
+ )
+ from norway_company_agent.vocabulary import (  # noqa: E402
+     MODULE_KEYS,
++    PUBLIC_MODULE_STATES,
+     SCHEMA_VERSION,
+     TERMINAL_STATUSES,
+-    derive_terminal_status,
+-    invalid_module_states,
++    derive_public_terminal_status,
++    invalid_public_module_states,
+ )
+ 
+ HEX64 = re.compile(r"^[0-9a-f]{64}$")
+@@ -61,6 +63,9 @@ CHECK_NAMES = (
+     "12_terminal_status_consistent_with_modules",
+     "13_expected_count",
+     "14_no_conversion_failures",
++    "15_available_claims_have_value",
++    "16_registry_sources_not_company_owned",
++    "17_changes_well_formed",
+ )
+ 
+ 
+@@ -199,7 +204,7 @@ def check_enums(rows: list[dict[str, Any]]) -> list[str]:
+         status = (row.get("run") or {}).get("terminal_status")
+         if status not in TERMINAL_STATUSES:
+             out.append(f"{org}: terminal_status {status!r} not in {list(TERMINAL_STATUSES)}")
+-        out.extend(f"{org}: {problem}" for problem in invalid_module_states(row.get("modules") or {}))
++        out.extend(f"{org}: {problem}" for problem in invalid_public_module_states(row.get("modules") or {}))
+         for claim in _claims(row):
+             field = claim.get("field")
+             if claim.get("availability") not in ALLOWED_AVAILABILITY:
+@@ -252,9 +257,9 @@ def check_terminal_status(rows: list[dict[str, Any]]) -> list[str]:
+     out: list[str] = []
+     for row in rows:
+         modules = row.get("modules") or {}
+-        if invalid_module_states(modules):
++        if invalid_public_module_states(modules):
+             continue  # check 8 already reports it
+-        expected = derive_terminal_status(modules)
++        expected = derive_public_terminal_status(modules)
+         actual = (row.get("run") or {}).get("terminal_status")
+         if actual != expected:
+             out.append(f"{_org(row)}: terminal_status {actual!r} but modules imply {expected!r}")
+@@ -277,6 +282,61 @@ def check_conversion_failures(rows: list[dict[str, Any]]) -> list[str]:
+     ]
+ 
+ 
++def check_available_claims_have_value(rows: list[dict[str, Any]]) -> list[str]:
++    out: list[str] = []
++    for row in rows:
++        org = _org(row)
++        for claim in _claims(row):
++            if claim.get("availability") == "available":
++                val = claim.get("value")
++                field = claim.get("field")
++                if val is None or (isinstance(val, str) and not val.strip()) or (isinstance(val, dict) and not val):
++                    out.append(f"{org}: claim {field!r} is available but has empty/null value: {val!r}")
++    return out
++
++
++def check_registry_sources_not_company_owned(rows: list[dict[str, Any]]) -> list[str]:
++    out: list[str] = []
++    for row in rows:
++        org = _org(row)
++        for item in _evidence_items(row):
++            url = str(item.get("source_url") or "")
++            host = (urllib.parse.urlparse(url).hostname or "").lower()
++            source_class = item.get("source_class")
++            if (host == "brreg.no" or host.endswith(".brreg.no")) and source_class == "company_owned":
++                out.append(
++                    f"{org}: evidence {item.get('id')!r} from host {host!r} has source_class 'company_owned'"
++                )
++    return out
++
++
++def check_changes_well_formed(rows: list[dict[str, Any]]) -> list[str]:
++    out: list[str] = []
++    for row in rows:
++        org = _org(row)
++        known_evidence = {item.get("id") for item in _evidence_items(row)}
++        seen_keys: set[tuple[str, Any, str]] = set()
++        for idx, change in enumerate(row.get("changes") or []):
++            if not isinstance(change, dict):
++                out.append(f"{org}: changes[{idx}] is not an object")
++                continue
++            field = str(change.get("field") or "")
++            change_type = change.get("change_type")
++            if change_type not in {"added", "updated", "removed"}:
++                out.append(f"{org}: change {field!r} has invalid change_type {change_type!r}")
++            change_org = str(change.get("organisation_number") or "")
++            if change_org != org:
++                out.append(f"{org}: change {field!r} organisation_number {change_org!r} != {org!r}")
++            for eid in change.get("current_evidence_ids") or []:
++                if eid not in known_evidence:
++                    out.append(f"{org}: change {field!r} references missing current evidence id {eid!r}")
++            key = (field, change.get("array_item_key"), change_type)
++            if key in seen_keys:
++                out.append(f"{org}: duplicate change record for {key!r}")
++            seen_keys.add(key)
++    return out
++
++
+ def validate(rows: list[dict[str, Any]], *, run_id: str | None = None, expected_count: int | None = None) -> dict[str, list[str]]:
+     results = {
+         CHECK_NAMES[0]: check_row_keysets(rows),
+@@ -293,6 +353,9 @@ def validate(rows: list[dict[str, Any]], *, run_id: str | None = None, expected_
+         CHECK_NAMES[11]: check_terminal_status(rows),
+         CHECK_NAMES[12]: check_expected_count(rows, expected_count),
+         CHECK_NAMES[13]: check_conversion_failures(rows),
++        CHECK_NAMES[14]: check_available_claims_have_value(rows),
++        CHECK_NAMES[15]: check_registry_sources_not_company_owned(rows),
++        CHECK_NAMES[16]: check_changes_well_formed(rows),
+     }
+     return results
+ 
+diff --git a/src/norway_company_agent/changes.py b/src/norway_company_agent/changes.py
+index 50d6324..3213aaa 100644
+--- a/src/norway_company_agent/changes.py
++++ b/src/norway_company_agent/changes.py
+@@ -50,6 +50,32 @@ from typing import Any
+ 
+ _FROZEN_FIELDS: frozenset[str] = frozenset({"jobs", "news"})
+ 
++_UNCOMPARABLE_AVAILABILITY: frozenset[str] = frozenset({"failed", "blocked"})
++
++_DEPENDENT_FIELDS: dict[str, str] = {
++    "phones": "official_website",
++    "emails": "official_website",
++    "website_addresses": "official_website",
++    "social_profiles": "official_website",
++}
++
++_PUBLIC_EVIDENCE_KEYS: tuple[str, ...] = (
++    "id",
++    "source_url",
++    "source_class",
++    "retrieved_at",
++    "content_sha256",
++    "claim_span",
++)
++
++
++def _is_placeholder(claim: dict[str, Any] | None) -> bool:
++    """Return True if the claim is an unpopulated filler created by _complete_claims."""
++    if not isinstance(claim, dict):
++        return False
++    return claim.get("availability") == "not_available" and not bool(claim.get("evidence_ids"))
++
++
+ 
+ # ---------------------------------------------------------------------------
+ # Stable-identifier extractors for known array-valued claim fields.
+@@ -185,6 +211,9 @@ def diff_claims(
+     organisation_number: str,
+     previous_claims: list[dict[str, Any]],
+     current_claims: list[dict[str, Any]],
++    *,
++    previous_evidence: list[dict[str, Any]] | None = None,
++    previous_run_id: str | None = None,
+ ) -> list[dict[str, Any]]:
+     """Compare two lists of normalized claims and return change records.
+ 
+@@ -196,20 +225,14 @@ def diff_claims(
+         claims[] from the previous run's public envelope.
+     current_claims:
+         claims[] from the current run's public envelope.
++    previous_evidence:
++        evidence[] list from the previous run's envelope.
++    previous_run_id:
++        run_id string from the previous run's envelope.
+ 
+     Returns
+     -------
+-    A list of change records.  Each record has:
+-        organisation_number  str   – the company
+-        field                str   – claim.field name
+-        change_type          str   – "added" | "updated" | "removed"
+-        previous_value       Any   – None for "added"
+-        current_value        Any   – None for "removed"
+-        previous_availability str | None
+-        current_availability  str | None
+-
+-    Unchanged values produce NO record.
+-    Jobs and News fields are excluded unconditionally.
++    A list of change records with evidence references and previous run ID.
+     """
+     prev_by_field: dict[str, dict[str, Any]] = {
+         c["field"]: c
+@@ -222,6 +245,13 @@ def diff_claims(
+         if isinstance(c, dict) and c.get("field") and c["field"] not in _FROZEN_FIELDS
+     }
+ 
++    prev_ev_by_id: dict[str, dict[str, Any]] = {}
++    for item in previous_evidence or []:
++        if isinstance(item, dict) and item.get("id"):
++            prev_ev_by_id[str(item["id"])] = {
++                k: item.get(k) for k in _PUBLIC_EVIDENCE_KEYS if k in item
++            }
++
+     all_fields = sorted(set(prev_by_field) | set(curr_by_field))
+     changes: list[dict[str, Any]] = []
+ 
+@@ -229,12 +259,39 @@ def diff_claims(
+         prev_claim = prev_by_field.get(field)
+         curr_claim = curr_by_field.get(field)
+ 
++        # Skip if either side is an unpopulated placeholder (not checked in that run).
++        if _is_placeholder(prev_claim) or _is_placeholder(curr_claim):
++            continue
++
++        # Skip if either side's availability is uncomparable (retrieval failure or blocked).
++        if (prev_claim and prev_claim.get("availability") in _UNCOMPARABLE_AVAILABILITY) or (
++            curr_claim and curr_claim.get("availability") in _UNCOMPARABLE_AVAILABILITY
++        ):
++            continue
++
++        # Skip dependent contact fields if website retrieval was failed/blocked on either side.
++        if field in _DEPENDENT_FIELDS:
++            parent_field = _DEPENDENT_FIELDS[field]
++            prev_parent = prev_by_field.get(parent_field)
++            curr_parent = curr_by_field.get(parent_field)
++            if (prev_parent and prev_parent.get("availability") in _UNCOMPARABLE_AVAILABILITY) or (
++                curr_parent and curr_parent.get("availability") in _UNCOMPARABLE_AVAILABILITY
++            ):
++                continue
++
++        curr_ev_ids = list(curr_claim.get("evidence_ids") or []) if curr_claim else []
++        prev_ev_ids = list(prev_claim.get("evidence_ids") or []) if prev_claim else []
++        field_prev_evidence = [prev_ev_by_id[pid] for pid in prev_ev_ids if pid in prev_ev_by_id]
++
+         # ── Field was present before but is absent now ──────────────────────
+         if prev_claim is not None and curr_claim is None:
+             changes.append(_change_record(
+                 organisation_number, field, "removed",
+                 prev_claim.get("value"), None,
+                 prev_claim.get("availability"), None,
++                current_evidence_ids=curr_ev_ids,
++                previous_evidence=field_prev_evidence,
++                previous_run_id=previous_run_id,
+             ))
+             continue
+ 
+@@ -244,6 +301,9 @@ def diff_claims(
+                 organisation_number, field, "added",
+                 None, curr_claim.get("value"),
+                 None, curr_claim.get("availability"),
++                current_evidence_ids=curr_ev_ids,
++                previous_evidence=field_prev_evidence,
++                previous_run_id=previous_run_id,
+             ))
+             continue
+ 
+@@ -262,7 +322,12 @@ def diff_claims(
+             # Coerce both sides to list (may be None when availability is not_available).
+             prev_list: list[Any] = prev_val if isinstance(prev_val, list) else []
+             curr_list: list[Any] = curr_val if isinstance(curr_val, list) else []
+-            array_changes = _diff_array(organisation_number, field, prev_list, curr_list)
++            array_changes = _diff_array(
++                organisation_number, field, prev_list, curr_list,
++                current_evidence_ids=curr_ev_ids,
++                previous_evidence=field_prev_evidence,
++                previous_run_id=previous_run_id,
++            )
+             changes.extend(array_changes)
+             # Availability change on the array claim itself (e.g. available → not_available)
+             # is reported separately only when the array diff did not already capture it.
+@@ -270,6 +335,9 @@ def diff_claims(
+                 changes.append(_change_record(
+                     organisation_number, field, "updated",
+                     prev_val, curr_val, prev_avail, curr_avail,
++                    current_evidence_ids=curr_ev_ids,
++                    previous_evidence=field_prev_evidence,
++                    previous_run_id=previous_run_id,
+                 ))
+             elif avail_changed and array_changes:
+                 # Availability changed alongside item-level changes — attach availability
+@@ -288,6 +356,9 @@ def diff_claims(
+         changes.append(_change_record(
+             organisation_number, field, "updated",
+             prev_val, curr_val, prev_avail, curr_avail,
++            current_evidence_ids=curr_ev_ids,
++            previous_evidence=field_prev_evidence,
++            previous_run_id=previous_run_id,
+         ))
+ 
+     return changes
+@@ -298,6 +369,10 @@ def _diff_array(
+     field: str,
+     prev_list: list[Any],
+     curr_list: list[Any],
++    *,
++    current_evidence_ids: list[str] | None = None,
++    previous_evidence: list[dict[str, Any]] | None = None,
++    previous_run_id: str | None = None,
+ ) -> list[dict[str, Any]]:
+     """Return item-level changes for one array-valued claim field.
+ 
+@@ -319,18 +394,27 @@ def _diff_array(
+                 organisation_number, field, "added",
+                 None, curr_item, None, None,
+                 array_item_key=key,
++                current_evidence_ids=current_evidence_ids,
++                previous_evidence=previous_evidence,
++                previous_run_id=previous_run_id,
+             ))
+         elif curr_item is None:
+             changes.append(_change_record(
+                 organisation_number, field, "removed",
+                 prev_item, None, None, None,
+                 array_item_key=key,
++                current_evidence_ids=current_evidence_ids,
++                previous_evidence=previous_evidence,
++                previous_run_id=previous_run_id,
+             ))
+         elif not _scalar_equal(prev_item, curr_item, field=field):
+             changes.append(_change_record(
+                 organisation_number, field, "updated",
+                 prev_item, curr_item, None, None,
+                 array_item_key=key,
++                current_evidence_ids=current_evidence_ids,
++                previous_evidence=previous_evidence,
++                previous_run_id=previous_run_id,
+             ))
+         # else: equal — no record.
+ 
+@@ -347,6 +431,9 @@ def _change_record(
+     current_availability: str | None,
+     *,
+     array_item_key: str | None = None,
++    current_evidence_ids: list[str] | None = None,
++    previous_evidence: list[dict[str, Any]] | None = None,
++    previous_run_id: str | None = None,
+ ) -> dict[str, Any]:
+     """Build one canonical change record."""
+     record: dict[str, Any] = {
+@@ -357,6 +444,9 @@ def _change_record(
+         "current_value": current_value,
+         "previous_availability": previous_availability,
+         "current_availability": current_availability,
++        "current_evidence_ids": list(current_evidence_ids or []),
++        "previous_evidence": list(previous_evidence or []),
++        "previous_run_id": previous_run_id,
+     }
+     if array_item_key is not None:
+         record["array_item_key"] = array_item_key
+diff --git a/src/norway_company_agent/official.py b/src/norway_company_agent/official.py
+index 8793fa6..c74630b 100644
+--- a/src/norway_company_agent/official.py
++++ b/src/norway_company_agent/official.py
+@@ -207,6 +207,8 @@ def normalize_entity(body: Any) -> dict[str, Any]:
+ 
+ 
+ def _classified(field: str, source_type: str, result: FetchResult, value: Any = None) -> dict[str, Any]:
++    if result.status == 200 and result.error:
++        return evidence(field, "source_error", source_type, result.url, note=result.error, content_sha256=result.content_sha256, retrieved_at=result.retrieved_at, effective_at=result.effective_at)
+     if result.status == 200:
+         return evidence(field, "available", source_type, result.url, value=result.body if value is None else value, content_sha256=result.content_sha256, retrieved_at=result.retrieved_at, effective_at=result.effective_at)
+     if result.status in {404, 410}:
+diff --git a/src/norway_company_agent/output_contract.py b/src/norway_company_agent/output_contract.py
+index ae07875..ce5c0e8 100644
+--- a/src/norway_company_agent/output_contract.py
++++ b/src/norway_company_agent/output_contract.py
+@@ -1,9 +1,17 @@
+ from __future__ import annotations
+ 
+ from typing import Any
++import urllib.parse
+ 
+ from .changes import diff_claims
+-from .vocabulary import MODULE_KEYS, SCHEMA_VERSION, derive_terminal_status, module_states
++from .vocabulary import (
++    MODULE_KEYS,
++    SCHEMA_VERSION,
++    derive_public_terminal_status,
++    derive_terminal_status,
++    module_states,
++    public_module_states,
++)
+ from .website import normalize_website_value
+ 
+ 
+@@ -196,6 +204,26 @@ PUBLIC_RUN_KEYS = ("run_id", "started_at", "completed_at", "terminal_status")
+ PUBLIC_EVIDENCE_KEYS = ("id", "source_url", "source_class", "retrieved_at", "content_sha256", "claim_span")
+ 
+ 
++def _is_missing_value(value: Any) -> bool:
++    if value is None:
++        return True
++    if isinstance(value, str) and not value.strip():
++        return True
++    if isinstance(value, dict) and not value:
++        return True
++    return False
++
++
++def _public_source_class(record: dict[str, Any]) -> str:
++    raw = str(record.get("source_class") or record.get("source_type") or "unknown")
++    host = (urllib.parse.urlparse(str(record.get("source_url") or "")).hostname or "").lower()
++    if host == "brreg.no" or host.endswith(".brreg.no"):
++        return raw if raw.startswith("official_") else "official_registry_live"
++    elif raw in {"registry_linked_company_website", "company_site"}:
++        return "company_owned"
++    return raw
++
++
+ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = None, previous_envelope: dict[str, Any] | None = None) -> dict[str, Any]:
+     profile = row.get("profile") if isinstance(row.get("profile"), dict) else row
+     organisation_number = str(profile.get("organisation_number") or row.get("organisation_number") or "")
+@@ -217,9 +245,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+             return evidence_ids[key]
+         item_id = f"ev-{organisation_number}-{len(evidence_items)}"
+         evidence_ids[key] = item_id
+-        source_class = str(record.get("source_class") or record.get("source_type") or "unknown")
+-        if source_class in {"registry_linked_company_website", "company_site"}:
+-            source_class = "company_owned"
++        source_class = _public_source_class(record)
+         item = {
+             "id": item_id,
+             "source_url": str(record.get("source_url") or ""),
+@@ -245,9 +271,11 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+                 availability=availability,
+             )
+             for field, path in REGISTRY_CLAIM_FIELDS:
++                val = _nested_get(registry_value, path) if availability == "available" else None
++                field_avail = "not_available" if availability == "available" and _is_missing_value(val) else availability
+                 claims.append(_claim(
+-                    field, _nested_get(registry_value, path) if availability == "available" else None,
+-                    availability, _confidence(availability, official=True), [registry_id],
++                    field, val if field_avail != "not_available" else None,
++                    field_avail, _confidence(field_avail, official=True), [registry_id],
+                 ))
+             _append_error(errors, "registry_live", registry, availability)
+ 
+@@ -320,7 +348,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+         claims.append(_claim(field, value, availability, _confidence(availability), [evidence_id]))
+ 
+     claims = _complete_claims(claims)
+-    modules = module_states(profile)
++    modules = public_module_states(profile)
+     ops = _operations(metrics, profile)
+ 
+     # Compute changes[] by comparing current normalized claims against the
+@@ -336,6 +364,8 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+             organisation_number,
+             previous_envelope["claims"],
+             claims,
++            previous_evidence=previous_envelope.get("evidence") or [],
++            previous_run_id=((previous_envelope.get("run") or {}).get("run_id") or previous_envelope.get("run_id")),
+         )
+     else:
+         computed_changes = []
+@@ -347,7 +377,7 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+             "run_id": str(row.get("run_id") or ""),
+             "started_at": str(row.get("started_at") or ""),
+             "completed_at": str(row.get("completed_at") or ""),
+-            "terminal_status": derive_terminal_status(modules),
++            "terminal_status": derive_public_terminal_status(modules),
+         },
+         "modules": modules,
+         "claims": claims,
+@@ -385,10 +415,10 @@ def conversion_failure_envelope(row: dict[str, Any], error: Exception) -> dict[s
+     profile = row.get("profile") if isinstance(row.get("profile"), dict) else row
+     organisation_number = str(profile.get("organisation_number") or row.get("organisation_number") or "")
+     try:
+-        modules = module_states(profile)
++        modules = public_module_states(profile)
+     except Exception:
+         # The profile itself is unreadable (for example an unknown evidence status).
+-        modules = {key: {"state": "source_error", "retry_count": 0} for key in MODULE_KEYS}
++        modules = {key: {"state": "failed", "retry_count": 0} for key in MODULE_KEYS}
+     return {
+         "schema_version": SCHEMA_VERSION,
+         "organisation_number": organisation_number,
+@@ -436,6 +466,10 @@ def _is_empty_checked(field: str, value: Any) -> bool:
+         return isinstance(value.get("locations"), list) and not value["locations"]
+     if field == "roles" and isinstance(value, dict):
+         return isinstance(value.get("roles"), list) and not value["roles"]
++    if field == "financials" and isinstance(value, dict):
++        return isinstance(value.get("records"), list) and not value["records"]
++    if field == "financial_history" and isinstance(value, dict):
++        return isinstance(value.get("years"), list) and not value["years"]
+     return False
+ 
+ 
+@@ -502,6 +536,10 @@ def _claim(
+ ) -> dict[str, Any]:
+     if availability not in ALLOWED_AVAILABILITY:
+         availability = "failed"
++    if availability == "available" and _is_missing_value(value):
++        availability = "not_available"
++        value = None
++        confidence = None
+     return {
+         "field": field,
+         "value": value,
+diff --git a/src/norway_company_agent/vocabulary.py b/src/norway_company_agent/vocabulary.py
+index 555b47c..eb51806 100644
+--- a/src/norway_company_agent/vocabulary.py
++++ b/src/norway_company_agent/vocabulary.py
+@@ -98,6 +98,148 @@ def module_states(profile: dict[str, Any]) -> dict[str, dict[str, Any]]:
+     return states
+ 
+ 
++PUBLIC_MODULE_STATES: tuple[str, ...] = (
++    "available",
++    "not_available",
++    "blocked",
++    "not_applicable",
++    "ambiguous",
++    "failed",
++)
++
++WEBSITE_IDENTITY_MODULES: tuple[str, ...] = ("website", "website_discovered")
++
++
++def _identity_assessment(record: dict[str, Any] | None) -> dict[str, Any] | None:
++    if not isinstance(record, dict):
++        return None
++    val = record.get("value")
++    if not isinstance(val, dict):
++        return None
++    assessment = val.get("identity_assessment")
++    if isinstance(assessment, dict) and assessment:
++        return assessment
++    return None
++
++
++def public_module_state(
++    internal: dict[str, Any],
++    *,
++    module: str = "",
++    record: dict[str, Any] | None = None,
++    website_internal_state: str = "",
++) -> dict[str, Any]:
++    """Map one internal module state dict onto the public 6-state vocabulary."""
++    if not isinstance(internal, dict):
++        raise UnknownModuleStatusError(
++            f"module {module!r}: internal state is not a dict: {internal!r}"
++        )
++    status = internal.get("state")
++    if status not in MODULE_STATES:
++        raise UnknownModuleStatusError(
++            f"module {module!r}: unknown internal module state {status!r}; "
++            f"allowed: {list(MODULE_STATES)}"
++        )
++
++    retry_count = int(internal.get("retry_count") or 0)
++
++    if status == "available":
++        if module in WEBSITE_IDENTITY_MODULES:
++            assessment = _identity_assessment(record)
++            if assessment is not None and assessment.get("publishable") is False:
++                pub_state = "ambiguous"
++            else:
++                pub_state = "available"
++        else:
++            pub_state = "available"
++    elif status == "not_found":
++        pub_state = "not_available"
++    elif status == "not_applicable":
++        pub_state = "not_applicable"
++    elif status == "blocked":
++        pub_state = "blocked"
++    elif status == "source_error":
++        if module in WEBSITE_IDENTITY_MODULES:
++            assessment = _identity_assessment(record)
++            if assessment is not None and assessment.get("decision") == "REJECT":
++                pub_state = "not_available"
++            else:
++                pub_state = "failed"
++        else:
++            pub_state = "failed"
++    elif status == "not_fetched":
++        if module in ("website_discovery", "website_discovered") and website_internal_state == "available":
++            pub_state = "not_applicable"
++        elif module in REQUIRED_MODULES:
++            pub_state = "failed"
++        else:
++            pub_state = "not_available"
++    else:
++        raise UnknownModuleStatusError(
++            f"module {module!r}: unhandled internal state {status!r}"
++        )
++
++    out: dict[str, Any] = {"state": pub_state, "retry_count": retry_count}
++    if pub_state == "blocked":
++        out["reason"] = internal.get("reason") or "policy"
++    return out
++
++
++def public_module_states(profile: dict[str, Any]) -> dict[str, dict[str, Any]]:
++    """Uniform module states for one profile, mapped to the public 6-state vocabulary."""
++    internals = module_states(profile)
++    records = profile.get("evidence") if isinstance(profile.get("evidence"), dict) else {}
++    website_internal = internals.get("website", {}).get("state", "")
++    states: dict[str, dict[str, Any]] = {}
++    for key in MODULE_KEYS:
++        internal = internals[key]
++        raw_record = records.get(key)
++        states[key] = public_module_state(
++            internal,
++            module=key,
++            record=raw_record,
++            website_internal_state=website_internal,
++        )
++    return states
++
++
++def derive_public_terminal_status(states: dict[str, dict[str, Any]]) -> str:
++    """completed | completed_with_gaps | failed, derived from public module states."""
++    if any(states[key]["state"] == "failed" for key in REQUIRED_MODULES):
++        return "failed"
++    for key in COVERAGE_MODULES:
++        state = states[key]["state"]
++        if state in {"not_available", "blocked", "ambiguous"} or (key not in REQUIRED_MODULES and state == "failed"):
++            return "completed_with_gaps"
++    return "completed"
++
++
++def invalid_public_module_states(states: dict[str, Any]) -> list[str]:
++    """Violations for one public `modules` mapping (used by validators)."""
++    problems: list[str] = []
++    if tuple(states) != MODULE_KEYS:
++        missing = [key for key in MODULE_KEYS if key not in states]
++        extra = [key for key in states if key not in MODULE_KEYS]
++        problems.append(f"module keys differ from fixed list (missing={missing}, extra={extra})")
++    for key, item in states.items():
++        if not isinstance(item, dict):
++            problems.append(f"module {key!r} is not an object")
++            continue
++        state = item.get("state")
++        if state not in PUBLIC_MODULE_STATES:
++            problems.append(f"module {key!r} has state {state!r} outside {list(PUBLIC_MODULE_STATES)}")
++        reason = item.get("reason")
++        if state == "blocked" and reason not in BLOCKED_REASONS:
++            problems.append(f"module {key!r} is blocked with reason {reason!r}; allowed {list(BLOCKED_REASONS)}")
++        if state != "blocked" and "reason" in item:
++            problems.append(f"module {key!r} has a reason but state is {state!r}")
++        retry = item.get("retry_count")
++        if not isinstance(retry, int) or isinstance(retry, bool) or retry < 0:
++            problems.append(f"module {key!r} retry_count {retry!r} is not a non-negative integer")
++    return problems
++
++
++
+ def derive_terminal_status(states: dict[str, dict[str, Any]]) -> str:
+     """completed | completed_with_gaps | failed, derived from module states only."""
+     if any(states[key]["state"] == "source_error" for key in REQUIRED_MODULES):
+diff --git a/src/norway_company_agent/website.py b/src/norway_company_agent/website.py
+index 30e1bb5..794c2a2 100644
+--- a/src/norway_company_agent/website.py
++++ b/src/norway_company_agent/website.py
+@@ -460,7 +460,19 @@ def fetch_website(url: str | None, *, timeout: float = 15.0, max_bytes: int = 2_
+     normalized = normalize_homepage(url)
+     if not normalized:
+         emit_crawl_event("crawler_completed", organisation_number=organisation_number or "", status="not_found")
+-        return evidence("website", "not_found", "registry_linked_company_website", "https://data.brreg.no/enhetsregisteret/api/enheter", note="No valid registry website URL"), {"requests": 0, "bytes": 0, "latencies_ms": []}
++        brreg_entity_url = (
++            f"https://data.brreg.no/enhetsregisteret/api/enheter/{organisation_number}"
++            if organisation_number
++            else "https://data.brreg.no/enhetsregisteret/api/enheter"
++        )
++        return evidence(
++            "website",
++            "not_found",
++            "official_registry_live",
++            brreg_entity_url,
++            note="Registry field hjemmeside is empty or not a valid URL",
++            source_row_key=organisation_number,
++        ), {"requests": 0, "bytes": 0, "latencies_ms": []}
+     try:
+         assert_public_url(normalized)
+     except ValueError as exc:
+@@ -642,7 +654,7 @@ def fetch_website(url: str | None, *, timeout: float = 15.0, max_bytes: int = 2_
+         record_request(module="website", provider="website/http", operation="GET homepage", success=False, status=exc.code, duration_ms=elapsed, organisation_number=organisation_number, error=f"HTTP {exc.code}")
+         emit_crawl_event("homepage_completed", url=normalized, status="http_error", code=exc.code)
+         emit_crawl_event("crawler_completed", organisation_number=organisation_number or "", status="http_error", url=normalized)
+-        status = "not_found" if exc.code in {404, 410} else "source_error"
++        status = "not_found" if exc.code in {404, 410} else "blocked" if exc.code in {401, 403, 451} else "source_error"
+         return evidence("website", status, "registry_linked_company_website", normalized, note=f"HTTP {exc.code}"), {"requests": 2, "bytes": 0, "latencies_ms": [elapsed]}
+     except urllib.error.URLError as exc:
+         record_request(module="website", provider="website/http", operation="GET homepage", success=False, status=0, duration_ms=int((time.monotonic() - started) * 1000), organisation_number=organisation_number, error="URLError")

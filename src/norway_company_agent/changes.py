@@ -50,6 +50,32 @@ from typing import Any
 
 _FROZEN_FIELDS: frozenset[str] = frozenset({"jobs", "news"})
 
+_UNCOMPARABLE_AVAILABILITY: frozenset[str] = frozenset({"failed", "blocked"})
+
+_DEPENDENT_FIELDS: dict[str, str] = {
+    "phones": "official_website",
+    "emails": "official_website",
+    "website_addresses": "official_website",
+    "social_profiles": "official_website",
+}
+
+_PUBLIC_EVIDENCE_KEYS: tuple[str, ...] = (
+    "id",
+    "source_url",
+    "source_class",
+    "retrieved_at",
+    "content_sha256",
+    "claim_span",
+)
+
+
+def _is_placeholder(claim: dict[str, Any] | None) -> bool:
+    """Return True if the claim is an unpopulated filler created by _complete_claims."""
+    if not isinstance(claim, dict):
+        return False
+    return claim.get("availability") == "not_available" and not bool(claim.get("evidence_ids"))
+
+
 
 # ---------------------------------------------------------------------------
 # Stable-identifier extractors for known array-valued claim fields.
@@ -185,6 +211,9 @@ def diff_claims(
     organisation_number: str,
     previous_claims: list[dict[str, Any]],
     current_claims: list[dict[str, Any]],
+    *,
+    previous_evidence: list[dict[str, Any]] | None = None,
+    previous_run_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Compare two lists of normalized claims and return change records.
 
@@ -196,20 +225,14 @@ def diff_claims(
         claims[] from the previous run's public envelope.
     current_claims:
         claims[] from the current run's public envelope.
+    previous_evidence:
+        evidence[] list from the previous run's envelope.
+    previous_run_id:
+        run_id string from the previous run's envelope.
 
     Returns
     -------
-    A list of change records.  Each record has:
-        organisation_number  str   – the company
-        field                str   – claim.field name
-        change_type          str   – "added" | "updated" | "removed"
-        previous_value       Any   – None for "added"
-        current_value        Any   – None for "removed"
-        previous_availability str | None
-        current_availability  str | None
-
-    Unchanged values produce NO record.
-    Jobs and News fields are excluded unconditionally.
+    A list of change records with evidence references and previous run ID.
     """
     prev_by_field: dict[str, dict[str, Any]] = {
         c["field"]: c
@@ -222,6 +245,13 @@ def diff_claims(
         if isinstance(c, dict) and c.get("field") and c["field"] not in _FROZEN_FIELDS
     }
 
+    prev_ev_by_id: dict[str, dict[str, Any]] = {}
+    for item in previous_evidence or []:
+        if isinstance(item, dict) and item.get("id"):
+            prev_ev_by_id[str(item["id"])] = {
+                k: item.get(k) for k in _PUBLIC_EVIDENCE_KEYS if k in item
+            }
+
     all_fields = sorted(set(prev_by_field) | set(curr_by_field))
     changes: list[dict[str, Any]] = []
 
@@ -229,12 +259,39 @@ def diff_claims(
         prev_claim = prev_by_field.get(field)
         curr_claim = curr_by_field.get(field)
 
+        # Skip if either side is an unpopulated placeholder (not checked in that run).
+        if _is_placeholder(prev_claim) or _is_placeholder(curr_claim):
+            continue
+
+        # Skip if either side's availability is uncomparable (retrieval failure or blocked).
+        if (prev_claim and prev_claim.get("availability") in _UNCOMPARABLE_AVAILABILITY) or (
+            curr_claim and curr_claim.get("availability") in _UNCOMPARABLE_AVAILABILITY
+        ):
+            continue
+
+        # Skip dependent contact fields if website retrieval was failed/blocked on either side.
+        if field in _DEPENDENT_FIELDS:
+            parent_field = _DEPENDENT_FIELDS[field]
+            prev_parent = prev_by_field.get(parent_field)
+            curr_parent = curr_by_field.get(parent_field)
+            if (prev_parent and prev_parent.get("availability") in _UNCOMPARABLE_AVAILABILITY) or (
+                curr_parent and curr_parent.get("availability") in _UNCOMPARABLE_AVAILABILITY
+            ):
+                continue
+
+        curr_ev_ids = list(curr_claim.get("evidence_ids") or []) if curr_claim else []
+        prev_ev_ids = list(prev_claim.get("evidence_ids") or []) if prev_claim else []
+        field_prev_evidence = [prev_ev_by_id[pid] for pid in prev_ev_ids if pid in prev_ev_by_id]
+
         # ── Field was present before but is absent now ──────────────────────
         if prev_claim is not None and curr_claim is None:
             changes.append(_change_record(
                 organisation_number, field, "removed",
                 prev_claim.get("value"), None,
                 prev_claim.get("availability"), None,
+                current_evidence_ids=curr_ev_ids,
+                previous_evidence=field_prev_evidence,
+                previous_run_id=previous_run_id,
             ))
             continue
 
@@ -244,6 +301,9 @@ def diff_claims(
                 organisation_number, field, "added",
                 None, curr_claim.get("value"),
                 None, curr_claim.get("availability"),
+                current_evidence_ids=curr_ev_ids,
+                previous_evidence=field_prev_evidence,
+                previous_run_id=previous_run_id,
             ))
             continue
 
@@ -262,7 +322,12 @@ def diff_claims(
             # Coerce both sides to list (may be None when availability is not_available).
             prev_list: list[Any] = prev_val if isinstance(prev_val, list) else []
             curr_list: list[Any] = curr_val if isinstance(curr_val, list) else []
-            array_changes = _diff_array(organisation_number, field, prev_list, curr_list)
+            array_changes = _diff_array(
+                organisation_number, field, prev_list, curr_list,
+                current_evidence_ids=curr_ev_ids,
+                previous_evidence=field_prev_evidence,
+                previous_run_id=previous_run_id,
+            )
             changes.extend(array_changes)
             # Availability change on the array claim itself (e.g. available → not_available)
             # is reported separately only when the array diff did not already capture it.
@@ -270,6 +335,9 @@ def diff_claims(
                 changes.append(_change_record(
                     organisation_number, field, "updated",
                     prev_val, curr_val, prev_avail, curr_avail,
+                    current_evidence_ids=curr_ev_ids,
+                    previous_evidence=field_prev_evidence,
+                    previous_run_id=previous_run_id,
                 ))
             elif avail_changed and array_changes:
                 # Availability changed alongside item-level changes — attach availability
@@ -288,6 +356,9 @@ def diff_claims(
         changes.append(_change_record(
             organisation_number, field, "updated",
             prev_val, curr_val, prev_avail, curr_avail,
+            current_evidence_ids=curr_ev_ids,
+            previous_evidence=field_prev_evidence,
+            previous_run_id=previous_run_id,
         ))
 
     return changes
@@ -298,6 +369,10 @@ def _diff_array(
     field: str,
     prev_list: list[Any],
     curr_list: list[Any],
+    *,
+    current_evidence_ids: list[str] | None = None,
+    previous_evidence: list[dict[str, Any]] | None = None,
+    previous_run_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return item-level changes for one array-valued claim field.
 
@@ -319,18 +394,27 @@ def _diff_array(
                 organisation_number, field, "added",
                 None, curr_item, None, None,
                 array_item_key=key,
+                current_evidence_ids=current_evidence_ids,
+                previous_evidence=previous_evidence,
+                previous_run_id=previous_run_id,
             ))
         elif curr_item is None:
             changes.append(_change_record(
                 organisation_number, field, "removed",
                 prev_item, None, None, None,
                 array_item_key=key,
+                current_evidence_ids=current_evidence_ids,
+                previous_evidence=previous_evidence,
+                previous_run_id=previous_run_id,
             ))
         elif not _scalar_equal(prev_item, curr_item, field=field):
             changes.append(_change_record(
                 organisation_number, field, "updated",
                 prev_item, curr_item, None, None,
                 array_item_key=key,
+                current_evidence_ids=current_evidence_ids,
+                previous_evidence=previous_evidence,
+                previous_run_id=previous_run_id,
             ))
         # else: equal — no record.
 
@@ -347,6 +431,9 @@ def _change_record(
     current_availability: str | None,
     *,
     array_item_key: str | None = None,
+    current_evidence_ids: list[str] | None = None,
+    previous_evidence: list[dict[str, Any]] | None = None,
+    previous_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Build one canonical change record."""
     record: dict[str, Any] = {
@@ -357,6 +444,9 @@ def _change_record(
         "current_value": current_value,
         "previous_availability": previous_availability,
         "current_availability": current_availability,
+        "current_evidence_ids": list(current_evidence_ids or []),
+        "previous_evidence": list(previous_evidence or []),
+        "previous_run_id": previous_run_id,
     }
     if array_item_key is not None:
         record["array_item_key"] = array_item_key

@@ -115,6 +115,24 @@ def extract_candidate(text: str) -> tuple[int | float | None, str | None, str, s
     return chosen[1], chosen[2], "accepted", chosen[3]
 
 
+def detect_ocr_capability() -> dict[str, Any]:
+    missing = [name for name in ("pdftoppm", "tesseract") if shutil.which(name) is None]
+    if "tesseract" not in missing:
+        try:
+            completed = subprocess.run(
+                ["tesseract", "--list-langs"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            languages = {line.strip() for line in completed.stdout.splitlines()[1:] if line.strip()}
+            if "nor" not in languages:
+                missing.append("tesseract-lang:nor")
+        except Exception:
+            missing.append("tesseract-lang:nor")
+    return {"available": not missing, "missing": missing}
+
+
 def ocr_pdf(pdf_path: Path, *, pages: int, dpi: int) -> str:
     with tempfile.TemporaryDirectory(prefix="signalpost-annual-ocr-") as temporary:
         prefix = Path(temporary) / "page"
@@ -149,7 +167,15 @@ def registry_employee_count(profile: dict) -> object:
     return None
 
 
-def collect(profile: dict, cache_dir: Path, *, ocr_pages: int, ocr_dpi: int) -> tuple[dict | None, dict]:
+def collect(
+    profile: dict,
+    cache_dir: Path,
+    *,
+    ocr_pages: int,
+    ocr_dpi: int,
+    ocr_available: bool = True,
+    ocr_missing: list[str] | None = None,
+) -> tuple[dict | None, dict]:
     org = str(profile["organisation_number"])
     registry_count = registry_employee_count(profile)
     if registry_count is not None and str(registry_count).strip().isdigit():
@@ -182,20 +208,20 @@ def collect(profile: dict, cache_dir: Path, *, ocr_pages: int, ocr_dpi: int) -> 
         ocr_required = needs_ocr(text) and ocr_pages > 0
         ocr_used = False
         ocr_cache_path = cache_dir / f"{org}-{latest['year']}-ocr-{ocr_pages}-{ocr_dpi}.txt"
+        if ocr_required and not ocr_available:
+            return None, {
+                "organisation_number": org,
+                "status": "ocr_unavailable",
+                "error": "OCR required but capability unavailable: " + ", ".join(ocr_missing or ["pdftoppm", "tesseract"]),
+                "missing": list(ocr_missing or []),
+                "report_year": str(latest["year"]),
+                "source_url": url,
+                "pdf_text_characters": text_extraction_chars,
+                "ocr_required": True,
+                "ocr_used": False,
+                "cache_hit": cache_hit,
+            }
         if ocr_required:
-            missing_tools = [name for name in ("pdftoppm", "tesseract") if shutil.which(name) is None]
-            if missing_tools:
-                return None, {
-                    "organisation_number": org,
-                    "status": "error",
-                    "error": "OCR required but missing executable(s): " + ", ".join(missing_tools),
-                    "report_year": str(latest["year"]),
-                    "source_url": url,
-                    "pdf_text_characters": text_extraction_chars,
-                    "ocr_required": True,
-                    "ocr_used": False,
-                    "cache_hit": cache_hit,
-                }
             if ocr_cache_path.exists():
                 ocr_text = ocr_cache_path.read_text(encoding="utf-8", errors="replace")
             else:
@@ -273,10 +299,21 @@ def main() -> None:
         eligible = eligible[: args.limit]
     cache_dir = Path(args.cache)
     cache_dir.mkdir(parents=True, exist_ok=True)
+    ocr_cap = detect_ocr_capability()
+    ocr_available = bool(ocr_cap.get("available"))
+    ocr_missing = list(ocr_cap.get("missing") or [])
     collected = {}
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         futures = {
-            pool.submit(collect, profile, cache_dir, ocr_pages=args.ocr_pages, ocr_dpi=args.ocr_dpi): str(profile["organisation_number"])
+            pool.submit(
+                collect,
+                profile,
+                cache_dir,
+                ocr_pages=args.ocr_pages,
+                ocr_dpi=args.ocr_dpi,
+                ocr_available=ocr_available,
+                ocr_missing=ocr_missing,
+            ): str(profile["organisation_number"])
             for profile in eligible
         }
         for future in as_completed(futures):
@@ -291,6 +328,7 @@ def main() -> None:
         "connector": "official_annual_report_workforce_v1",
         "eligible": len(eligible),
         "accepted": len(observations),
+        "ocr_capability": ocr_cap,
         "status_counts": statuses,
         "claim_boundary": "Latest official PDF, exact organisation number in document, company-scope employee phrase only; group phrases and conflicts abstain.",
         "company_results": company_results,

@@ -272,6 +272,11 @@ def main() -> int:
         type=Path,
         help="Rebuild envelopes from a profiles or fat-envelope JSONL without rerunning collection. Public envelopes carry no profile and are rejected.",
     )
+    parser.add_argument(
+        "--previous-envelopes",
+        type=Path,
+        help="Path to previous envelopes JSONL file for change tracking.",
+    )
     parser.add_argument("--include-workforce-ocr", dest="skip_workforce_ocr", action="store_false", default=True,
                         help="Enable annual-report OCR workforce extraction (default: disabled).")
     parser.add_argument("--skip-workforce-ocr", dest="skip_workforce_ocr", action="store_true",
@@ -287,6 +292,37 @@ def main() -> int:
     if args.run_id and not valid_run_id(args.run_id):
         parser.error("--run-id may contain only letters, digits, dot, underscore, and hyphen")
 
+    previous_envelopes = args.previous_envelopes
+    preserved_previous: Path | None = None
+    if previous_envelopes is not None:
+        if not previous_envelopes.is_absolute():
+            previous_envelopes = PROJECT_ROOT / previous_envelopes
+        if not previous_envelopes.exists():
+            parser.error(f"--previous-envelopes file not found: {previous_envelopes}")
+
+    def preserve_previous_if_needed() -> Path | None:
+        nonlocal previous_envelopes
+        if previous_envelopes is None:
+            return None
+        is_inside = False
+        try:
+            previous_envelopes.resolve().relative_to(OUT_DIR.resolve())
+            is_inside = True
+        except ValueError:
+            pass
+        if not is_inside:
+            try:
+                if previous_envelopes.resolve() == RESULT_FILE.resolve():
+                    is_inside = True
+            except Exception:
+                pass
+        if is_inside:
+            temp_prev = PROJECT_ROOT / f".prev-envelopes-{uuid.uuid4().hex}.jsonl"
+            shutil.copy2(previous_envelopes, temp_prev)
+            previous_envelopes = temp_prev
+            return temp_prev
+        return None
+
     if args.source_envelopes:
         source = args.source_envelopes
         if not source.is_absolute():
@@ -294,6 +330,7 @@ def main() -> int:
         if not source.exists():
             parser.error(f"Source envelope file not found: {source}")
         if args.fresh:
+            preserved_previous = preserve_previous_if_needed()
             # Preserve an input stored under out/ long enough to convert it.
             preserved_source: Path | None = None
             try:
@@ -320,6 +357,8 @@ def main() -> int:
             "--report",
             str(WORK_DIR / "source-contract-report.json"),
         ]
+        if previous_envelopes is not None:
+            command.extend(["--previous-envelopes", str(previous_envelopes)])
         try:
             completed = subprocess.run(command, cwd=PROJECT_ROOT, capture_output=True, text=True)
             if completed.returncode != 0:
@@ -333,6 +372,8 @@ def main() -> int:
         finally:
             if args.fresh and 'preserved_source' in locals() and preserved_source is not None:
                 preserved_source.unlink(missing_ok=True)
+            if preserved_previous is not None:
+                preserved_previous.unlink(missing_ok=True)
 
     organisations = args.organisations
     if not organisations.is_absolute():
@@ -351,6 +392,7 @@ def main() -> int:
         parser.error("--progress-interval must be positive")
 
     if args.fresh:
+        preserved_previous = preserve_previous_if_needed()
         try:
             organisations.resolve().relative_to(OUT_DIR.resolve())
         except ValueError:
@@ -402,60 +444,66 @@ def main() -> int:
         command.append("--include-workforce-ocr")
     if not args.skip_deep_crawl:
         command.append("--include-deep-crawl")
+    if previous_envelopes is not None:
+        command.extend(["--previous-envelopes", str(previous_envelopes)])
 
-    return_code, progress, elapsed = run_with_progress(
-        command,
-        expected_count=expected_count,
-        progress_interval=args.progress_interval,
-    )
-    source = WORK_DIR / "envelopes.jsonl"
-    envelopes_produced = source.exists()
-    produced_envelope_count = 0
-    if envelopes_produced:
-        try:
-            produced_envelope_count = sum(1 for line in source.read_text(encoding="utf-8").splitlines() if line.strip())
-        except OSError:
-            produced_envelope_count = 0
-    if return_code != 0 and envelopes_produced and produced_envelope_count >= expected_count:
-        print(
-            f"[{datetime.now().strftime('%H:%M:%S')}] NOTICE | RETURN-CODE OVERRIDE: subprocess exited "
-            f"with code {return_code}, but {produced_envelope_count}/{expected_count} envelopes exist; "
-            "treating the run as completed-with-failures.",
-            file=sys.stderr,
-            flush=True,
+    try:
+        return_code, progress, elapsed = run_with_progress(
+            command,
+            expected_count=expected_count,
+            progress_interval=args.progress_interval,
         )
-        return_code = 0
-    if return_code != 0:
-        print_final_summary(success=False, expected_count=expected_count, state=progress, elapsed=elapsed, return_code=return_code)
-        if source.exists():
-            produced_envelope_count = sum(1 for line in source.read_text(encoding="utf-8").splitlines() if line.strip())
+        source = WORK_DIR / "envelopes.jsonl"
+        envelopes_produced = source.exists()
+        produced_envelope_count = 0
+        if envelopes_produced:
+            try:
+                produced_envelope_count = sum(1 for line in source.read_text(encoding="utf-8").splitlines() if line.strip())
+            except OSError:
+                produced_envelope_count = 0
+        if return_code != 0 and envelopes_produced and produced_envelope_count >= expected_count:
             print(
-                f"Run reported failure but {produced_envelope_count} envelopes exist at {source}. "
-                f"Intermediate files kept in {WORK_DIR}",
+                f"[{datetime.now().strftime('%H:%M:%S')}] NOTICE | RETURN-CODE OVERRIDE: subprocess exited "
+                f"with code {return_code}, but {produced_envelope_count}/{expected_count} envelopes exist; "
+                "treating the run as completed-with-failures.",
+                file=sys.stderr,
+                flush=True,
+            )
+            return_code = 0
+        if return_code != 0:
+            print_final_summary(success=False, expected_count=expected_count, state=progress, elapsed=elapsed, return_code=return_code)
+            if source.exists():
+                produced_envelope_count = sum(1 for line in source.read_text(encoding="utf-8").splitlines() if line.strip())
+                print(
+                    f"Run reported failure but {produced_envelope_count} envelopes exist at {source}. "
+                    f"Intermediate files kept in {WORK_DIR}",
+                    file=sys.stderr,
+                )
+                if produced_envelope_count:
+                    atomic_copy_file(source, RESULT_FILE)
+                    print(f"Partial envelope output preserved at {RESULT_FILE}", file=sys.stderr)
+                    publish_validation_report()
+            else:
+                print(f"Run failed. Intermediate files were kept in {WORK_DIR}", file=sys.stderr)
+            return return_code
+
+        if not envelopes_produced:
+            print(f"Run finished but envelope file was not created: {source}", file=sys.stderr)
+            return 1
+        atomic_copy_file(source, RESULT_FILE)
+        publish_validation_report()
+        print_final_summary(success=True, expected_count=expected_count, state=progress, elapsed=elapsed, return_code=0)
+        if produced_envelope_count != expected_count:
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] WARNING | envelope count mismatch "
+                f"({produced_envelope_count} vs expected {expected_count}); copied to result anyway.",
                 file=sys.stderr,
             )
-            if produced_envelope_count:
-                atomic_copy_file(source, RESULT_FILE)
-                print(f"Partial envelope output preserved at {RESULT_FILE}", file=sys.stderr)
-                publish_validation_report()
-        else:
-            print(f"Run failed. Intermediate files were kept in {WORK_DIR}", file=sys.stderr)
-        return return_code
-
-    if not envelopes_produced:
-        print(f"Run finished but envelope file was not created: {source}", file=sys.stderr)
-        return 1
-    atomic_copy_file(source, RESULT_FILE)
-    publish_validation_report()
-    print_final_summary(success=True, expected_count=expected_count, state=progress, elapsed=elapsed, return_code=0)
-    if produced_envelope_count != expected_count:
-        print(
-            f"[{datetime.now().strftime('%H:%M:%S')}] WARNING | envelope count mismatch "
-            f"({produced_envelope_count} vs expected {expected_count}); copied to result anyway.",
-            file=sys.stderr,
-        )
-    print(f"Final output: {RESULT_FILE}")
-    return 0
+        print(f"Final output: {RESULT_FILE}")
+        return 0
+    finally:
+        if preserved_previous is not None:
+            preserved_previous.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

@@ -93,6 +93,64 @@ def build_fat(
     )
 
 
+def load_previous_envelopes(path: Path | str | None) -> dict[str, dict]:
+    """Load previous envelopes by organisation number for change detection."""
+    if not path:
+        return {}
+    p = Path(path)
+    if not p.exists():
+        print(f"Warning: --previous-envelopes file {p} does not exist", file=sys.stderr)
+        return {}
+
+    bad_lines = 0
+    org_map: dict[str, dict] = {}
+    duplicates: set[str] = set()
+
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except Exception:
+            bad_lines += 1
+            continue
+        if not isinstance(row, dict):
+            bad_lines += 1
+            continue
+
+        org = str(row.get("organisation_number") or (row.get("profile") or {}).get("organisation_number") or "")
+        if not org:
+            bad_lines += 1
+            continue
+
+        if org in org_map or org in duplicates:
+            duplicates.add(org)
+            org_map.pop(org, None)
+            continue
+
+        if isinstance(row.get("claims"), list):
+            org_map[org] = row
+        elif isinstance(row.get("profile"), dict):
+            try:
+                derived = to_public_envelope(row)
+                org_map[org] = derived
+            except Exception as exc:
+                print(f"Warning: could not derive claims for previous org {org}: {exc}", file=sys.stderr)
+                continue
+        else:
+            bad_lines += 1
+
+    if duplicates:
+        for dup in sorted(duplicates):
+            print(f"Warning: duplicate organisation number {dup} in previous envelopes; skipping org for changes", file=sys.stderr)
+
+    if bad_lines:
+        print(f"Warning: skipped {bad_lines} unparseable or invalid line(s) in previous envelopes", file=sys.stderr)
+
+    return org_map
+
+
 def build_envelope(
     row: dict,
     *,
@@ -101,6 +159,7 @@ def build_envelope(
     completed_at: str,
     observations: list[dict],
     envelope_format: str = "public",
+    previous_envelope: dict | None = None,
 ) -> dict:
     if envelope_format not in ENVELOPE_FORMATS:
         raise ValueError(f"envelope_format must be one of {ENVELOPE_FORMATS}, got {envelope_format!r}")
@@ -109,7 +168,7 @@ def build_envelope(
     )
     if envelope_format == "fat":
         return attach_claims(fat)
-    return to_public_envelope(fat)
+    return to_public_envelope(fat, previous_envelope=previous_envelope)
 
 
 def is_public_envelope(row: dict) -> bool:
@@ -130,6 +189,7 @@ def main() -> int:
         "--envelope-format", choices=ENVELOPE_FORMATS, default="public",
         help="public: claims-based output (default). fat: legacy envelope with the full profile.",
     )
+    p.add_argument("--previous-envelopes", help="Optional path to previous envelopes JSONL")
     args = p.parse_args()
 
     source_path = Path(args.input or args.profiles or "")
@@ -140,6 +200,8 @@ def main() -> int:
 
     output_path = Path(args.output)
     report_path = Path(args.report) if args.report else output_path.parent / "contract-report.json"
+
+    previous_envelopes = load_previous_envelopes(args.previous_envelopes) if args.previous_envelopes else {}
 
     rows = read_jsonl(source_path)
     public_rows = [row for row in rows if is_public_envelope(row)]
@@ -155,6 +217,7 @@ def main() -> int:
         organisation_number = str(
             row.get("organisation_number") or (row.get("profile") or {}).get("organisation_number") or ""
         )
+        prev_env = previous_envelopes.get(organisation_number)
         try:
             envelope = build_envelope(
                 row,
@@ -163,6 +226,7 @@ def main() -> int:
                 completed_at=args.completed_at,
                 observations=observations.get(organisation_number, []),
                 envelope_format=args.envelope_format,
+                previous_envelope=prev_env,
             )
         except Exception as exc:
             # Stage 6 is batch-critical, but a malformed company must not prevent
@@ -204,6 +268,7 @@ def main() -> int:
     status_counts: dict[str, int] = {}
     for item in envelopes:
         status_counts[status_of(item)] = status_counts.get(status_of(item), 0) + 1
+    changes_total = sum(len(item.get("changes") or []) for item in envelopes)
     atomic_write_text(
         report_path,
         json.dumps(
@@ -216,6 +281,9 @@ def main() -> int:
                 "terminal_status_counts": status_counts,
                 "claims_failed": len(claims_failed_orgs),
                 "claims_failed_orgs": claims_failed_orgs,
+                "previous_envelopes": str(args.previous_envelopes) if args.previous_envelopes else None,
+                "previous_envelopes_loaded": len(previous_envelopes),
+                "changes_total": changes_total,
             },
             ensure_ascii=False,
             indent=2,

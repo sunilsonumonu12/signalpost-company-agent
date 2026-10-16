@@ -65,6 +65,7 @@ CHECK_NAMES = (
     "14_no_conversion_failures",
     "15_available_claims_have_value",
     "16_registry_sources_not_company_owned",
+    "17_changes_well_formed",
 )
 
 
@@ -309,6 +310,33 @@ def check_registry_sources_not_company_owned(rows: list[dict[str, Any]]) -> list
     return out
 
 
+def check_changes_well_formed(rows: list[dict[str, Any]]) -> list[str]:
+    out: list[str] = []
+    for row in rows:
+        org = _org(row)
+        known_evidence = {item.get("id") for item in _evidence_items(row)}
+        seen_keys: set[tuple[str, Any, str]] = set()
+        for idx, change in enumerate(row.get("changes") or []):
+            if not isinstance(change, dict):
+                out.append(f"{org}: changes[{idx}] is not an object")
+                continue
+            field = str(change.get("field") or "")
+            change_type = change.get("change_type")
+            if change_type not in {"added", "updated", "removed"}:
+                out.append(f"{org}: change {field!r} has invalid change_type {change_type!r}")
+            change_org = str(change.get("organisation_number") or "")
+            if change_org != org:
+                out.append(f"{org}: change {field!r} organisation_number {change_org!r} != {org!r}")
+            for eid in change.get("current_evidence_ids") or []:
+                if eid not in known_evidence:
+                    out.append(f"{org}: change {field!r} references missing current evidence id {eid!r}")
+            key = (field, change.get("array_item_key"), change_type)
+            if key in seen_keys:
+                out.append(f"{org}: duplicate change record for {key!r}")
+            seen_keys.add(key)
+    return out
+
+
 def validate(rows: list[dict[str, Any]], *, run_id: str | None = None, expected_count: int | None = None) -> dict[str, list[str]]:
     results = {
         CHECK_NAMES[0]: check_row_keysets(rows),
@@ -327,6 +355,7 @@ def validate(rows: list[dict[str, Any]], *, run_id: str | None = None, expected_
         CHECK_NAMES[13]: check_conversion_failures(rows),
         CHECK_NAMES[14]: check_available_claims_have_value(rows),
         CHECK_NAMES[15]: check_registry_sources_not_company_owned(rows),
+        CHECK_NAMES[16]: check_changes_well_formed(rows),
     }
     return results
 

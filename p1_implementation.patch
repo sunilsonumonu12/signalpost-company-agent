@@ -1,0 +1,825 @@
+diff --git a/scripts/validate_envelopes.py b/scripts/validate_envelopes.py
+index a3f246c..50e74a4 100644
+--- a/scripts/validate_envelopes.py
++++ b/scripts/validate_envelopes.py
+@@ -25,6 +25,11 @@ from typing import Any
+ PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ sys.path.insert(0, str(PROJECT_ROOT / "src"))
+ 
++from norway_company_agent.claim_builders import (  # noqa: E402
++    CLAIM_FAMILIES,
++    MEMBER_TO_FAMILY,
++    OPTIONAL_CLAIM_KEYS,
++)
+ from norway_company_agent.output_contract import (  # noqa: E402
+     ALLOWED_AVAILABILITY,
+     CANONICAL_CLAIM_FIELDS,
+@@ -111,19 +116,44 @@ def check_row_keysets(rows: list[dict[str, Any]]) -> list[str]:
+ 
+ def check_claims(rows: list[dict[str, Any]]) -> list[str]:
+     out: list[str] = []
+-    expected = list(CLAIM_FIELD_ORDER)
++    required = set(CANONICAL_CLAIM_FIELDS)
++    allowed = required | set(OPTIONAL_CLAIM_KEYS)
++    slots = list(CLAIM_FIELD_ORDER)
++    known_fields = set(slots) | set(MEMBER_TO_FAMILY)
+     for row in rows:
++        org = _org(row)
+         claims = _claims(row)
++        key_counts: Counter = Counter()
+         for claim in claims:
+-            if tuple(sorted(claim)) != CLAIM_KEYSET:
+-                out.append(f"{_org(row)}: claim {claim.get('field')!r} keys {sorted(claim)} differ from {list(CLAIM_KEYSET)}")
+-        fields = [claim.get("field") for claim in claims]
+-        if fields != expected:
+-            duplicates = [name for name, count in Counter(fields).items() if count > 1]
+-            out.append(
+-                f"{_org(row)}: claim fields differ (missing={[f for f in expected if f not in fields]}, "
+-                f"extra={[f for f in fields if f not in expected]}, duplicates={duplicates})"
+-            )
++            keys = set(claim)
++            field = claim.get("field")
++            if not required <= keys or not keys <= allowed:
++                out.append(f"{org}: claim {field!r} keys {sorted(keys)} not within required {sorted(required)} + optional {sorted(OPTIONAL_CLAIM_KEYS)}")
++            if field in MEMBER_TO_FAMILY:
++                claim_key = claim.get("claim_key")
++                if not isinstance(claim_key, str) or not claim_key:
++                    out.append(f"{org}: member claim {field!r} has no claim_key")
++                else:
++                    key_counts[claim_key] += 1
++            if "reporting_period" in claim:
++                period = claim["reporting_period"]
++                if not isinstance(period, dict) or set(period) != {"start", "end"} or not period.get("end"):
++                    out.append(f"{org}: claim {field!r} reporting_period {period!r} malformed")
++            if "effective_at" in claim and not isinstance(claim["effective_at"], str):
++                out.append(f"{org}: claim {field!r} effective_at must be a string")
++        out.extend(f"{org}: claim_key {key!r} used {count} times" for key, count in key_counts.items() if count > 1)
++        field_counts = Counter(claim.get("field") for claim in claims)
++        for slot in slots:
++            if slot in CLAIM_FAMILIES:
++                member_count = sum(field_counts[member] for member in CLAIM_FAMILIES[slot])
++                placeholder_count = field_counts[slot]
++                if not ((member_count >= 1 and placeholder_count == 0) or (member_count == 0 and placeholder_count == 1)):
++                    out.append(f"{org}: family {slot!r} has {member_count} member(s) and {placeholder_count} placeholder(s)")
++            elif field_counts[slot] != 1:
++                out.append(f"{org}: claim field {slot!r} appears {field_counts[slot]} times, expected 1")
++        unknown = sorted(str(field) for field in field_counts if field not in known_fields)
++        if unknown:
++            out.append(f"{org}: unknown claim fields {unknown}")
+     return out
+ 
+ 
+@@ -330,7 +360,7 @@ def check_changes_well_formed(rows: list[dict[str, Any]]) -> list[str]:
+             for eid in change.get("current_evidence_ids") or []:
+                 if eid not in known_evidence:
+                     out.append(f"{org}: change {field!r} references missing current evidence id {eid!r}")
+-            key = (field, change.get("array_item_key"), change_type)
++            key = (field, change.get("array_item_key"), change.get("claim_key"), change_type)
+             if key in seen_keys:
+                 out.append(f"{org}: duplicate change record for {key!r}")
+             seen_keys.add(key)
+diff --git a/src/norway_company_agent/changes.py b/src/norway_company_agent/changes.py
+index 3213aaa..fdbd327 100644
+--- a/src/norway_company_agent/changes.py
++++ b/src/norway_company_agent/changes.py
+@@ -43,6 +43,8 @@ from __future__ import annotations
+ import json
+ from typing import Any
+ 
++from .claim_builders import CLAIM_FAMILIES, MEMBER_TO_FAMILY, explode_legacy_claims
++
+ 
+ # ---------------------------------------------------------------------------
+ # Fields that must never appear in changes[] (frozen modules).
+@@ -207,6 +209,38 @@ def _scalar_equal(a: Any, b: Any, *, field: str | None = None) -> bool:
+ # Core diff function
+ # ---------------------------------------------------------------------------
+ 
++def _family_entries(claims: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
++    """Build {family: {"placeholder": claim_or_None, "members": {claim_key: claim}}} from a claim list."""
++    entries: dict[str, dict[str, Any]] = {family: {"placeholder": None, "members": {}} for family in CLAIM_FAMILIES}
++    for claim in claims:
++        if not isinstance(claim, dict):
++            continue
++        field = claim.get("field")
++        if field in CLAIM_FAMILIES:
++            entries[field]["placeholder"] = claim
++        elif field in MEMBER_TO_FAMILY and claim.get("claim_key"):
++            entries[MEMBER_TO_FAMILY[field]]["members"][str(claim["claim_key"])] = claim
++    return entries
++
++
++def _family_state(entry: dict[str, Any]) -> str:
++    if entry["members"]:
++        return "members"
++    placeholder = entry["placeholder"]
++    if placeholder is None:
++        return "absent"
++    availability = placeholder.get("availability")
++    if availability in _UNCOMPARABLE_AVAILABILITY:
++        return "uncomparable"
++    if _is_placeholder(placeholder):
++        return "unchecked"
++    if availability == "not_available":
++        return "confirmed_empty"
++    if availability == "available":
++        return "blob"
++    return "uncomparable"
++
++
+ def diff_claims(
+     organisation_number: str,
+     previous_claims: list[dict[str, Any]],
+@@ -234,17 +268,27 @@ def diff_claims(
+     -------
+     A list of change records with evidence references and previous run ID.
+     """
++    previous_claims = explode_legacy_claims(list(previous_claims or []), organisation_number)
++    current_claims = explode_legacy_claims(list(current_claims or []), organisation_number)
++
++    # Singletons: exclude family slots and member fields.
+     prev_by_field: dict[str, dict[str, Any]] = {
+         c["field"]: c
+         for c in previous_claims
+         if isinstance(c, dict) and c.get("field") and c["field"] not in _FROZEN_FIELDS
++        and c["field"] not in CLAIM_FAMILIES and c["field"] not in MEMBER_TO_FAMILY
+     }
+     curr_by_field: dict[str, dict[str, Any]] = {
+         c["field"]: c
+         for c in current_claims
+         if isinstance(c, dict) and c.get("field") and c["field"] not in _FROZEN_FIELDS
++        and c["field"] not in CLAIM_FAMILIES and c["field"] not in MEMBER_TO_FAMILY
+     }
+ 
++    # Family entries for family-level diff.
++    prev_families = _family_entries(previous_claims)
++    curr_families = _family_entries(current_claims)
++
+     prev_ev_by_id: dict[str, dict[str, Any]] = {}
+     for item in previous_evidence or []:
+         if isinstance(item, dict) and item.get("id"):
+@@ -279,36 +323,16 @@ def diff_claims(
+             ):
+                 continue
+ 
+-        curr_ev_ids = list(curr_claim.get("evidence_ids") or []) if curr_claim else []
+-        prev_ev_ids = list(prev_claim.get("evidence_ids") or []) if prev_claim else []
+-        field_prev_evidence = [prev_ev_by_id[pid] for pid in prev_ev_ids if pid in prev_ev_by_id]
+-
+-        # ── Field was present before but is absent now ──────────────────────
+-        if prev_claim is not None and curr_claim is None:
+-            changes.append(_change_record(
+-                organisation_number, field, "removed",
+-                prev_claim.get("value"), None,
+-                prev_claim.get("availability"), None,
+-                current_evidence_ids=curr_ev_ids,
+-                previous_evidence=field_prev_evidence,
+-                previous_run_id=previous_run_id,
+-            ))
+-            continue
+-
+-        # ── Field is new — absent before, present now ────────────────────────
+-        if prev_claim is None and curr_claim is not None:
+-            changes.append(_change_record(
+-                organisation_number, field, "added",
+-                None, curr_claim.get("value"),
+-                None, curr_claim.get("availability"),
+-                current_evidence_ids=curr_ev_ids,
+-                previous_evidence=field_prev_evidence,
+-                previous_run_id=previous_run_id,
+-            ))
++        # Schema-evolution: a field present on only one side means the envelopes come
++        # from different schema versions (e.g. the four new registry fields).  Real
++        # appear/disappear transitions are reported as availability changes, not as
++        # missing fields.
++        if prev_claim is None or curr_claim is None:
+             continue
+ 
+-        # ── Field exists in both envelopes ───────────────────────────────────
+-        assert prev_claim is not None and curr_claim is not None  # narrowing
++        curr_ev_ids = list(curr_claim.get("evidence_ids") or [])
++        prev_ev_ids = list(prev_claim.get("evidence_ids") or [])
++        field_prev_evidence = [prev_ev_by_id[pid] for pid in prev_ev_ids if pid in prev_ev_by_id]
+ 
+         prev_avail = prev_claim.get("availability")
+         curr_avail = curr_claim.get("availability")
+@@ -319,7 +343,6 @@ def diff_claims(
+ 
+         # Array-valued claims need item-level stable-id diffing.
+         if _is_array_field(field, prev_val) or _is_array_field(field, curr_val):
+-            # Coerce both sides to list (may be None when availability is not_available).
+             prev_list: list[Any] = prev_val if isinstance(prev_val, list) else []
+             curr_list: list[Any] = curr_val if isinstance(curr_val, list) else []
+             array_changes = _diff_array(
+@@ -329,8 +352,6 @@ def diff_claims(
+                 previous_run_id=previous_run_id,
+             )
+             changes.extend(array_changes)
+-            # Availability change on the array claim itself (e.g. available → not_available)
+-            # is reported separately only when the array diff did not already capture it.
+             if avail_changed and not array_changes:
+                 changes.append(_change_record(
+                     organisation_number, field, "updated",
+@@ -340,8 +361,6 @@ def diff_claims(
+                     previous_run_id=previous_run_id,
+                 ))
+             elif avail_changed and array_changes:
+-                # Availability changed alongside item-level changes — attach availability
+-                # context to the first array change so it is not silently lost.
+                 array_changes[0]["previous_availability"] = prev_avail
+                 array_changes[0]["current_availability"] = curr_avail
+             continue
+@@ -350,7 +369,6 @@ def diff_claims(
+         value_changed = not _scalar_equal(prev_val, curr_val, field=field)
+ 
+         if not value_changed and not avail_changed:
+-            # Truly unchanged — emit nothing.
+             continue
+ 
+         changes.append(_change_record(
+@@ -361,6 +379,83 @@ def diff_claims(
+             previous_run_id=previous_run_id,
+         ))
+ 
++    # ── Family-level diff ───────────────────────────────────────────────────
++    for family in sorted(CLAIM_FAMILIES):
++        prev_entry = prev_families[family]
++        curr_entry = curr_families[family]
++        p_state = _family_state(prev_entry)
++        c_state = _family_state(curr_entry)
++
++        if p_state == "blob" and c_state == "blob":
++            prev_ph = prev_entry["placeholder"]
++            curr_ph = curr_entry["placeholder"]
++            if prev_ph and curr_ph:
++                prev_val = prev_ph.get("value")
++                curr_val = curr_ph.get("value")
++                prev_avail = prev_ph.get("availability")
++                curr_avail = curr_ph.get("availability")
++                if not _scalar_equal(prev_val, curr_val, field=family) or prev_avail != curr_avail:
++                    curr_ev_ids = list(curr_ph.get("evidence_ids") or [])
++                    prev_ev_ids = list(prev_ph.get("evidence_ids") or [])
++                    field_prev_evidence = [prev_ev_by_id[pid] for pid in prev_ev_ids if pid in prev_ev_by_id]
++                    changes.append(_change_record(
++                        organisation_number, family, "updated",
++                        prev_val, curr_val, prev_avail, curr_avail,
++                        current_evidence_ids=curr_ev_ids,
++                        previous_evidence=field_prev_evidence,
++                        previous_run_id=previous_run_id,
++                    ))
++            continue
++
++        if p_state in {"members", "confirmed_empty"} and c_state in {"members", "confirmed_empty"}:
++            prev_members = prev_entry["members"]
++            curr_members = curr_entry["members"]
++            all_keys = sorted(set(prev_members) | set(curr_members))
++            for key in all_keys:
++                prev_m = prev_members.get(key)
++                curr_m = curr_members.get(key)
++                if prev_m is None and curr_m is not None:
++                    curr_ev_ids = list(curr_m.get("evidence_ids") or [])
++                    changes.append(_change_record(
++                        organisation_number, curr_m["field"], "added",
++                        None, curr_m.get("value"),
++                        None, curr_m.get("availability"),
++                        current_evidence_ids=curr_ev_ids,
++                        previous_evidence=[],
++                        previous_run_id=previous_run_id,
++                        claim_key=key,
++                    ))
++                elif curr_m is None and prev_m is not None:
++                    prev_ev_ids = list(prev_m.get("evidence_ids") or [])
++                    field_prev_evidence = [prev_ev_by_id[pid] for pid in prev_ev_ids if pid in prev_ev_by_id]
++                    changes.append(_change_record(
++                        organisation_number, prev_m["field"], "removed",
++                        prev_m.get("value"), None,
++                        prev_m.get("availability"), None,
++                        current_evidence_ids=[],
++                        previous_evidence=field_prev_evidence,
++                        previous_run_id=previous_run_id,
++                        claim_key=key,
++                    ))
++                elif prev_m is not None and curr_m is not None:
++                    member_field = curr_m["field"]
++                    if not _scalar_equal(prev_m.get("value"), curr_m.get("value"), field=member_field) or prev_m.get("availability") != curr_m.get("availability"):
++                        curr_ev_ids = list(curr_m.get("evidence_ids") or [])
++                        prev_ev_ids = list(prev_m.get("evidence_ids") or [])
++                        field_prev_evidence = [prev_ev_by_id[pid] for pid in prev_ev_ids if pid in prev_ev_by_id]
++                        changes.append(_change_record(
++                            organisation_number, member_field, "updated",
++                            prev_m.get("value"), curr_m.get("value"),
++                            prev_m.get("availability"), curr_m.get("availability"),
++                            current_evidence_ids=curr_ev_ids,
++                            previous_evidence=field_prev_evidence,
++                            previous_run_id=previous_run_id,
++                            claim_key=key,
++                        ))
++            continue
++
++        # Any other combination (absent, unchecked, uncomparable, blob vs members): skip.
++
+     return changes
+ 
+ 
+@@ -431,6 +526,7 @@ def _change_record(
+     current_availability: str | None,
+     *,
+     array_item_key: str | None = None,
++    claim_key: str | None = None,
+     current_evidence_ids: list[str] | None = None,
+     previous_evidence: list[dict[str, Any]] | None = None,
+     previous_run_id: str | None = None,
+@@ -450,4 +546,6 @@ def _change_record(
+     }
+     if array_item_key is not None:
+         record["array_item_key"] = array_item_key
++    if claim_key is not None:
++        record["claim_key"] = claim_key
+     return record
+diff --git a/src/norway_company_agent/claim_builders.py b/src/norway_company_agent/claim_builders.py
+new file mode 100644
+index 0000000..9f30ba1
+--- /dev/null
++++ b/src/norway_company_agent/claim_builders.py
+@@ -0,0 +1,280 @@
++"""Claim families and member-claim builders for official BRREG data (P1-1).
++
++Pure functions only. No imports from this package.
++"""
++from __future__ import annotations
++
++from typing import Any
++
++FINANCIAL_METRICS: tuple[str, ...] = (
++    "revenue", "operating_result", "profit_before_tax", "annual_result",
++    "assets", "equity", "debt",
++)
++
++CLAIM_FAMILIES: dict[str, tuple[str, ...]] = {
++    "financials": tuple(f"financials.{metric}" for metric in FINANCIAL_METRICS),
++    "roles": ("role",),
++    "locations": ("registered_workplace",),
++    "group": ("group_relation",),
++}
++
++MEMBER_TO_FAMILY: dict[str, str] = {
++    member: family for family, members in CLAIM_FAMILIES.items() for member in members
++}
++
++OPTIONAL_CLAIM_KEYS: frozenset[str] = frozenset({"claim_key", "reporting_period", "effective_at"})
++
++
++# ---------------------------------------------------------------------------
++# Span helpers (P1-2)
++# ---------------------------------------------------------------------------
++
++REGISTRY_SOURCE_PATHS: dict[str, str] = {
++    "legal_name": "navn",
++    "legal_form": "organisasjonsform.kode",
++    "employees": "antallAnsatte",
++    "industry_code": "naeringskode1.kode",
++    "municipality": "forretningsadresse.kommune",
++    "business_address": "forretningsadresse",
++    "bankrupt": "konkurs",
++    "liquidating": "underAvvikling",
++    "latest_submitted_accounts": "sisteInnsendteAarsregnskap",
++    "industry": "naeringskode1.beskrivelse",
++    "municipality_number": "forretningsadresse.kommunenummer",
++    "postal_address": "postadresse",
++    "registry_declared_website": "hjemmeside",
++}
++
++
++def _text(value: Any) -> str:
++    return "" if value is None else str(value).strip()
++
++
++def render_span_value(value: Any) -> str:
++    if value is None:
++        return "(empty)"
++    if isinstance(value, bool):
++        return "true" if value else "false"
++    if isinstance(value, dict):
++        parts: list[str] = []
++        lines = value.get("adresse")
++        if isinstance(lines, list):
++            parts.extend(_text(line) for line in lines if _text(line))
++        place = " ".join(p for p in (_text(value.get("postnummer")), _text(value.get("poststed"))) if p)
++        if place:
++            parts.append(place)
++        for key in ("kommune", "land"):
++            if _text(value.get(key)):
++                parts.append(_text(value.get(key)))
++        if parts:
++            return ", ".join(parts)
++        return ", ".join(f"{k}={_text(v)}" for k, v in sorted(value.items()) if not isinstance(v, (dict, list)))
++    if isinstance(value, list):
++        return "; ".join(render_span_value(item) for item in value)
++    return _text(value)
++
++
++def registry_span(field: str, value: Any) -> str:
++    return f"{REGISTRY_SOURCE_PATHS.get(field, field)}: {render_span_value(value)}"[:400]
++
++
++def module_singleton_span(field: str, value: Any) -> str | None:
++    if not isinstance(value, dict):
++        return None
++    if field == "financial_history":
++        years = [str(year) for year in value.get("years") or []]
++        return ("Filed annual-account years: " + (", ".join(years) if years else "(none)"))[:400]
++    if field == "accounting_obligation":
++        return (f"classification: {_text(value.get('classification'))}; "
++                f"legal_form: {_text(value.get('legal_form'))}; "
++                f"ruleset: {_text(value.get('ruleset_version'))}")[:400]
++    return None
++
++
++# ---------------------------------------------------------------------------
++# Member-spec builders (Phase 2)
++# ---------------------------------------------------------------------------
++
++def financial_member_specs(value: Any) -> list[dict[str, Any]]:
++    specs: list[dict[str, Any]] = []
++    records = value.get("records") if isinstance(value, dict) else None
++    for record in records or []:
++        if not isinstance(record, dict):
++            continue
++        period = record.get("period") if isinstance(record.get("period"), dict) else {}
++        start = _text(period.get("fraDato")) or None
++        end = _text(period.get("tilDato"))
++        if not end:
++            continue
++        account_type = _text(record.get("account_type")) or "UNKNOWN"
++        currency = _text(record.get("currency")) or None
++        for metric in FINANCIAL_METRICS:
++            amount = record.get(metric)
++            if isinstance(amount, bool) or not isinstance(amount, (int, float)):
++                amount = None
++            shown = "(empty)" if amount is None else f"{amount} {currency or ''}".strip()
++            specs.append({
++                "field": f"financials.{metric}",
++                "value": None if amount is None else {"amount": amount, "currency": currency},
++                "claim_key": f"financials.{metric}:{account_type}:{end}",
++                "reporting_period": {"start": start, "end": end},
++                "span": f"Regnskap {_text(record.get('record_id'))} {account_type} {start or '?'}..{end}: {metric} = {shown}",
++            })
++    return specs
++
++
++def role_member_specs(value: Any) -> list[dict[str, Any]]:
++    specs: list[dict[str, Any]] = []
++    seen: set[str] = set()
++    roles = value.get("roles") if isinstance(value, dict) else None
++    for item in roles or []:
++        if not isinstance(item, dict) or item.get("inactive"):
++            continue
++        code = _text(item.get("role_code"))
++        who = _text(item.get("organisation_number")) or _text(item.get("name"))
++        if not code or not who:
++            continue
++        key = f"role:{code}:{who}"
++        if key in seen:
++            continue
++        seen.add(key)
++        spec: dict[str, Any] = {
++            "field": "role",
++            "value": {name: item.get(name) for name in ("name", "organisation_number", "role_code", "role", "group_code", "group")},
++            "claim_key": key,
++            "span": f"{_text(item.get('role')) or code}: {_text(item.get('name')) or who}",
++        }
++        if _text(item.get("last_changed")):
++            spec["effective_at"] = _text(item.get("last_changed"))
++        specs.append(spec)
++    return specs
++
++
++def location_member_specs(value: Any) -> list[dict[str, Any]]:
++    specs: list[dict[str, Any]] = []
++    seen: set[str] = set()
++    locations = value.get("locations") if isinstance(value, dict) else None
++    for item in locations or []:
++        if not isinstance(item, dict):
++            continue
++        org = _text(item.get("organisation_number"))
++        if not org or org in seen:
++            continue
++        seen.add(org)
++        address = item.get("address") if isinstance(item.get("address"), dict) else {}
++        place = " ".join(part for part in (_text(address.get("postnummer")), _text(address.get("poststed"))) if part)
++        specs.append({
++            "field": "registered_workplace",
++            "value": {name: item.get(name) for name in ("organisation_number", "name", "address", "industry", "employees")},
++            "claim_key": f"registered_workplace:{org}",
++            "span": f"Underenhet {org} {_text(item.get('name'))}" + (f", {place}" if place else ""),
++        })
++    return specs
++
++
++_GROUP_SKIP_KEYS = frozenset({"organisasjonsform", "knytningsform"})
++
++
++def _group_nodes(node: Any, parent_org: str, parent_name: str, out: list[tuple[dict[str, Any], str, str]]) -> None:
++    if isinstance(node, list):
++        for child in node:
++            _group_nodes(child, parent_org, parent_name, out)
++        return
++    if not isinstance(node, dict):
++        return
++    org = _text(node.get("organisasjonsnummer"))
++    name = _text(node.get("navn"))
++    if org:
++        out.append((node, parent_org, parent_name))
++    for key, child in node.items():
++        if key in _GROUP_SKIP_KEYS or not isinstance(child, (list, dict)):
++            continue
++        _group_nodes(child, org or parent_org, name or parent_name, out)
++
++
++def group_member_specs(value: Any, organisation_number: str) -> list[dict[str, Any]]:
++    nodes: list[tuple[dict[str, Any], str, str]] = []
++    _group_nodes(value, "", "", nodes)
++    target = _text(organisation_number)
++    specs: list[dict[str, Any]] = []
++    seen: set[str] = set()
++    for node, tree_parent_org, tree_parent_name in nodes:
++        org = _text(node.get("organisasjonsnummer"))
++        if not org or org == target:
++            continue
++        parent_org = _text(node.get("parentOrganisasjonsnummer")) or tree_parent_org
++        parent_name = _text(node.get("parentNavn")) or tree_parent_name
++        link = node.get("knytningsform") if isinstance(node.get("knytningsform"), dict) else {}
++        key = f"group_relation:{parent_org or '-'}:{org}"
++        if key in seen:
++            continue
++        seen.add(key)
++        spec: dict[str, Any] = {
++            "field": "group_relation",
++            "value": {
++                "organisation_number": org,
++                "name": _text(node.get("navn")) or None,
++                "parent_organisation_number": parent_org or None,
++                "parent_name": parent_name or None,
++                "link_code": _text(link.get("kode")) or None,
++                "link_description": _text(link.get("beskrivelse")) or None,
++                "ownership_basis": _text(node.get("grunnlag")) or None,
++                "level": node.get("nivaa"),
++            },
++            "claim_key": key,
++            "span": (
++                f"Konsernstruktur: {_text(node.get('navn'))} ({org}), "
++                f"{_text(link.get('beskrivelse')) or 'relasjon'} under {parent_name or '-'} ({parent_org or '-'})"
++                + (f", grunnlag {_text(node.get('grunnlag'))}" if _text(node.get("grunnlag")) else "")
++            ),
++        }
++        if _text(node.get("dato")):
++            spec["effective_at"] = _text(node.get("dato"))
++        specs.append(spec)
++    return specs
++
++
++def build_member_specs(family: str, value: Any, organisation_number: str) -> list[dict[str, Any]]:
++    if family == "financials":
++        return financial_member_specs(value)
++    if family == "roles":
++        return role_member_specs(value)
++    if family == "locations":
++        return location_member_specs(value)
++    if family == "group":
++        return group_member_specs(value, organisation_number)
++    return []
++
++
++def explode_legacy_claims(claims: list[dict[str, Any]], organisation_number: str) -> list[dict[str, Any]]:
++    """Turn available legacy blob claims (field == family slot) into member claims.
++
++    Used by change detection so a previous envelope in the old blob shape compares
++    item-by-item with a current envelope in the member shape. Claims that are not
++    available blobs, and blobs whose shape is not recognised, are returned unchanged.
++    """
++    out: list[dict[str, Any]] = []
++    for claim in claims:
++        if not isinstance(claim, dict):
++            continue
++        field = claim.get("field")
++        if field in CLAIM_FAMILIES and claim.get("availability") == "available" and isinstance(claim.get("value"), dict):
++            specs = build_member_specs(str(field), claim["value"], organisation_number)
++            if specs:
++                for spec in specs:
++                    available = spec["value"] is not None
++                    member: dict[str, Any] = {
++                        "field": spec["field"],
++                        "value": spec["value"],
++                        "availability": "available" if available else "not_available",
++                        "confidence": claim.get("confidence") if available else None,
++                        "evidence_ids": list(claim.get("evidence_ids") or []),
++                        "claim_key": spec["claim_key"],
++                    }
++                    for optional in ("reporting_period", "effective_at"):
++                        if optional in spec:
++                            member[optional] = spec[optional]
++                    out.append(member)
++                continue
++        out.append(claim)
++    return out
+diff --git a/src/norway_company_agent/output_contract.py b/src/norway_company_agent/output_contract.py
+index ce5c0e8..04c4070 100644
+--- a/src/norway_company_agent/output_contract.py
++++ b/src/norway_company_agent/output_contract.py
+@@ -4,6 +4,14 @@ from typing import Any
+ import urllib.parse
+ 
+ from .changes import diff_claims
++from .claim_builders import (
++    CLAIM_FAMILIES,
++    MEMBER_TO_FAMILY,
++    OPTIONAL_CLAIM_KEYS,
++    build_member_specs,
++    registry_span,
++    module_singleton_span,
++)
+ from .vocabulary import (
+     MODULE_KEYS,
+     SCHEMA_VERSION,
+@@ -80,6 +88,21 @@ def assert_claim_schema_integrity(envelope: dict[str, Any]) -> None:
+                 f"claim '{field_name}': missing required field(s): {sorted(missing)}"
+             )
+ 
++        # 1b. No unknown keys allowed (only canonical + optional).
++        extra = set(claim) - CANONICAL_CLAIM_FIELDS - OPTIONAL_CLAIM_KEYS
++        if extra:
++            violations.append(
++                f"claim '{field_name}': unknown claim key(s): {sorted(extra)}"
++            )
++
++        # 1c. Member claims must have a non-empty claim_key.
++        if claim.get("field") in MEMBER_TO_FAMILY:
++            ck = claim.get("claim_key")
++            if not isinstance(ck, str) or not ck:
++                violations.append(
++                    f"claim '{field_name}': member claim requires a non-empty 'claim_key'"
++                )
++
+         # 2. field must be a non-empty string.
+         if not isinstance(claim.get("field"), str) or not claim["field"].strip():
+             violations.append(f"claim '{field_name}': 'field' must be a non-empty string")
+@@ -161,6 +184,10 @@ REGISTRY_CLAIM_FIELDS = (
+     ("bankrupt", "bankrupt"),
+     ("liquidating", "liquidating"),
+     ("latest_submitted_accounts", "latest_submitted_accounts"),
++    ("industry", ("industry", "beskrivelse")),
++    ("municipality_number", ("business_address", "kommunenummer")),
++    ("postal_address", "postal_address"),
++    ("registry_declared_website", "website"),
+ )
+ 
+ MODULE_CLAIM_FIELDS = (
+@@ -265,17 +292,25 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+     if registry:
+         availability = _availability(registry)
+         if availability:
+-            registry_span = _claim_span(profile, registry)
+-            registry_id = add_evidence(
+-                "registry_live", registry, claim_span=registry_span,
+-                availability=availability,
+-            )
++            if availability != "available":
++                registry_id = add_evidence(
++                    "registry_live", registry, claim_span=_claim_span(profile, registry),
++                    availability=availability,
++                )
+             for field, path in REGISTRY_CLAIM_FIELDS:
+                 val = _nested_get(registry_value, path) if availability == "available" else None
+                 field_avail = "not_available" if availability == "available" and _is_missing_value(val) else availability
++                if availability == "available":
++                    field_evidence_id = add_evidence(
++                        f"registry_live:{field}", registry,
++                        claim_span=registry_span(field, val if field_avail == "available" else None),
++                        availability=field_avail,
++                    )
++                else:
++                    field_evidence_id = registry_id
+                 claims.append(_claim(
+                     field, val if field_avail != "not_available" else None,
+-                    field_avail, _confidence(field_avail, official=True), [registry_id],
++                    field_avail, _confidence(field_avail, official=True), [field_evidence_id],
+                 ))
+             _append_error(errors, "registry_live", registry, availability)
+ 
+@@ -313,8 +348,36 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+         if availability is None:
+             continue
+         value = record.get("value") if availability in {"available", "not_available"} else None
++
++        if field in CLAIM_FAMILIES and availability == "available":
++            specs = build_member_specs(field, value, organisation_number)
++            if specs:
++                for spec in specs:
++                    member_id = add_evidence(
++                        f"{field}:{spec['claim_key']}", record,
++                        claim_span=spec["span"][:400],
++                        availability="available",
++                    )
++                    claims.append(_claim(
++                        spec["field"], spec["value"], "available",
++                        _confidence("available", official=True), [member_id],
++                        claim_key=spec["claim_key"],
++                        reporting_period=spec.get("reporting_period"),
++                        effective_at=spec.get("effective_at"),
++                    ))
++                continue
++            if field != "group":
++                evidence_id = add_evidence(field, record, claim_span=_claim_span(profile, record), availability="not_available")
++                claims.append(_claim(field, None, "not_available", _confidence("not_available"), [evidence_id]))
++                continue
++
++        span = _claim_span(profile, record)
++        if availability == "available":
++            better_span = module_singleton_span(field, value)
++            if better_span:
++                span = better_span
+         evidence_id = add_evidence(
+-            field, record, claim_span=_claim_span(profile, record),
++            field, record, claim_span=span,
+             availability=availability,
+         )
+         claims.append(_claim(field, value, availability, _confidence(availability, official=True), [evidence_id]))
+@@ -393,17 +456,35 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None =
+ 
+ 
+ def _complete_claims(claims: list[dict[str, Any]], *, missing_availability: str = "not_available") -> list[dict[str, Any]]:
+-    """Return exactly CLAIM_FIELD_ORDER, one claim per field, filling gaps explicitly."""
+-    by_field: dict[str, dict[str, Any]] = {}
++    """Return one entry per CLAIM_FIELD_ORDER slot. A family slot is either its member claims (sorted by field, claim_key) or one placeholder claim."""
++    singles: dict[str, dict[str, Any]] = {}
++    members: dict[str, list[dict[str, Any]]] = {family: [] for family in CLAIM_FAMILIES}
++    unknown: list[dict[str, Any]] = []
+     for claim in claims:
+-        by_field.setdefault(claim["field"], claim)
+-    ordered = [
+-        by_field.pop(field, None)
+-        or _claim(field, None, missing_availability, _confidence(missing_availability), [])
+-        for field in CLAIM_FIELD_ORDER
+-    ]
+-    # Unknown fields stay visible so the validator can flag them.
+-    ordered.extend(by_field.values())
++        field = claim["field"]
++        if field in MEMBER_TO_FAMILY:
++            members[MEMBER_TO_FAMILY[field]].append(claim)
++        elif field in CLAIM_FIELD_ORDER:
++            singles.setdefault(field, claim)
++        else:
++            unknown.append(claim)
++    ordered: list[dict[str, Any]] = []
++    for slot in CLAIM_FIELD_ORDER:
++        family_members = members.get(slot) or []
++        if family_members:
++            seen_keys: set[str] = set()
++            for claim in sorted(family_members, key=lambda c: (c["field"], str(c.get("claim_key") or ""))):
++                key = str(claim.get("claim_key") or "")
++                if key in seen_keys:
++                    continue
++                seen_keys.add(key)
++                ordered.append(claim)
++            continue
++        ordered.append(
++            singles.get(slot)
++            or _claim(slot, None, missing_availability, _confidence(missing_availability), [])
++        )
++    ordered.extend(unknown)
+     return ordered
+ 
+ 
+@@ -533,6 +614,10 @@ def _claim(
+     availability: str,
+     confidence: float | None,
+     evidence_ids: list[str],
++    *,
++    claim_key: str | None = None,
++    reporting_period: dict[str, Any] | None = None,
++    effective_at: str | None = None,
+ ) -> dict[str, Any]:
+     if availability not in ALLOWED_AVAILABILITY:
+         availability = "failed"
+@@ -540,13 +625,20 @@ def _claim(
+         availability = "not_available"
+         value = None
+         confidence = None
+-    return {
++    claim = {
+         "field": field,
+         "value": value,
+         "availability": availability,
+         "confidence": confidence,
+         "evidence_ids": evidence_ids,
+     }
++    if claim_key is not None:
++        claim["claim_key"] = claim_key
++    if reporting_period is not None:
++        claim["reporting_period"] = reporting_period
++    if effective_at is not None:
++        claim["effective_at"] = effective_at
++    return claim
+ 
+ 
+ def _claim_span(profile: dict[str, Any], record: dict[str, Any]) -> str:

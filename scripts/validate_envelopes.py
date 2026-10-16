@@ -25,6 +25,11 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from norway_company_agent.claim_builders import (  # noqa: E402
+    CLAIM_FAMILIES,
+    MEMBER_TO_FAMILY,
+    OPTIONAL_CLAIM_KEYS,
+)
 from norway_company_agent.output_contract import (  # noqa: E402
     ALLOWED_AVAILABILITY,
     CANONICAL_CLAIM_FIELDS,
@@ -111,19 +116,44 @@ def check_row_keysets(rows: list[dict[str, Any]]) -> list[str]:
 
 def check_claims(rows: list[dict[str, Any]]) -> list[str]:
     out: list[str] = []
-    expected = list(CLAIM_FIELD_ORDER)
+    required = set(CANONICAL_CLAIM_FIELDS)
+    allowed = required | set(OPTIONAL_CLAIM_KEYS)
+    slots = list(CLAIM_FIELD_ORDER)
+    known_fields = set(slots) | set(MEMBER_TO_FAMILY)
     for row in rows:
+        org = _org(row)
         claims = _claims(row)
+        key_counts: Counter = Counter()
         for claim in claims:
-            if tuple(sorted(claim)) != CLAIM_KEYSET:
-                out.append(f"{_org(row)}: claim {claim.get('field')!r} keys {sorted(claim)} differ from {list(CLAIM_KEYSET)}")
-        fields = [claim.get("field") for claim in claims]
-        if fields != expected:
-            duplicates = [name for name, count in Counter(fields).items() if count > 1]
-            out.append(
-                f"{_org(row)}: claim fields differ (missing={[f for f in expected if f not in fields]}, "
-                f"extra={[f for f in fields if f not in expected]}, duplicates={duplicates})"
-            )
+            keys = set(claim)
+            field = claim.get("field")
+            if not required <= keys or not keys <= allowed:
+                out.append(f"{org}: claim {field!r} keys {sorted(keys)} not within required {sorted(required)} + optional {sorted(OPTIONAL_CLAIM_KEYS)}")
+            if field in MEMBER_TO_FAMILY:
+                claim_key = claim.get("claim_key")
+                if not isinstance(claim_key, str) or not claim_key:
+                    out.append(f"{org}: member claim {field!r} has no claim_key")
+                else:
+                    key_counts[claim_key] += 1
+            if "reporting_period" in claim:
+                period = claim["reporting_period"]
+                if not isinstance(period, dict) or set(period) != {"start", "end"} or not period.get("end"):
+                    out.append(f"{org}: claim {field!r} reporting_period {period!r} malformed")
+            if "effective_at" in claim and not isinstance(claim["effective_at"], str):
+                out.append(f"{org}: claim {field!r} effective_at must be a string")
+        out.extend(f"{org}: claim_key {key!r} used {count} times" for key, count in key_counts.items() if count > 1)
+        field_counts = Counter(claim.get("field") for claim in claims)
+        for slot in slots:
+            if slot in CLAIM_FAMILIES:
+                member_count = sum(field_counts[member] for member in CLAIM_FAMILIES[slot])
+                placeholder_count = field_counts[slot]
+                if not ((member_count >= 1 and placeholder_count == 0) or (member_count == 0 and placeholder_count == 1)):
+                    out.append(f"{org}: family {slot!r} has {member_count} member(s) and {placeholder_count} placeholder(s)")
+            elif field_counts[slot] != 1:
+                out.append(f"{org}: claim field {slot!r} appears {field_counts[slot]} times, expected 1")
+        unknown = sorted(str(field) for field in field_counts if field not in known_fields)
+        if unknown:
+            out.append(f"{org}: unknown claim fields {unknown}")
     return out
 
 
@@ -330,7 +360,7 @@ def check_changes_well_formed(rows: list[dict[str, Any]]) -> list[str]:
             for eid in change.get("current_evidence_ids") or []:
                 if eid not in known_evidence:
                     out.append(f"{org}: change {field!r} references missing current evidence id {eid!r}")
-            key = (field, change.get("array_item_key"), change_type)
+            key = (field, change.get("array_item_key"), change.get("claim_key"), change_type)
             if key in seen_keys:
                 out.append(f"{org}: duplicate change record for {key!r}")
             seen_keys.add(key)

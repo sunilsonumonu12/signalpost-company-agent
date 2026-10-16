@@ -43,6 +43,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from .claim_builders import CLAIM_FAMILIES, MEMBER_TO_FAMILY, explode_legacy_claims
+
 
 # ---------------------------------------------------------------------------
 # Fields that must never appear in changes[] (frozen modules).
@@ -207,6 +209,38 @@ def _scalar_equal(a: Any, b: Any, *, field: str | None = None) -> bool:
 # Core diff function
 # ---------------------------------------------------------------------------
 
+def _family_entries(claims: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Build {family: {"placeholder": claim_or_None, "members": {claim_key: claim}}} from a claim list."""
+    entries: dict[str, dict[str, Any]] = {family: {"placeholder": None, "members": {}} for family in CLAIM_FAMILIES}
+    for claim in claims:
+        if not isinstance(claim, dict):
+            continue
+        field = claim.get("field")
+        if field in CLAIM_FAMILIES:
+            entries[field]["placeholder"] = claim
+        elif field in MEMBER_TO_FAMILY and claim.get("claim_key"):
+            entries[MEMBER_TO_FAMILY[field]]["members"][str(claim["claim_key"])] = claim
+    return entries
+
+
+def _family_state(entry: dict[str, Any]) -> str:
+    if entry["members"]:
+        return "members"
+    placeholder = entry["placeholder"]
+    if placeholder is None:
+        return "absent"
+    availability = placeholder.get("availability")
+    if availability in _UNCOMPARABLE_AVAILABILITY:
+        return "uncomparable"
+    if _is_placeholder(placeholder):
+        return "unchecked"
+    if availability == "not_available":
+        return "confirmed_empty"
+    if availability == "available":
+        return "blob"
+    return "uncomparable"
+
+
 def diff_claims(
     organisation_number: str,
     previous_claims: list[dict[str, Any]],
@@ -234,16 +268,26 @@ def diff_claims(
     -------
     A list of change records with evidence references and previous run ID.
     """
+    previous_claims = explode_legacy_claims(list(previous_claims or []), organisation_number)
+    current_claims = explode_legacy_claims(list(current_claims or []), organisation_number)
+
+    # Singletons: exclude family slots and member fields.
     prev_by_field: dict[str, dict[str, Any]] = {
         c["field"]: c
         for c in previous_claims
         if isinstance(c, dict) and c.get("field") and c["field"] not in _FROZEN_FIELDS
+        and c["field"] not in CLAIM_FAMILIES and c["field"] not in MEMBER_TO_FAMILY
     }
     curr_by_field: dict[str, dict[str, Any]] = {
         c["field"]: c
         for c in current_claims
         if isinstance(c, dict) and c.get("field") and c["field"] not in _FROZEN_FIELDS
+        and c["field"] not in CLAIM_FAMILIES and c["field"] not in MEMBER_TO_FAMILY
     }
+
+    # Family entries for family-level diff.
+    prev_families = _family_entries(previous_claims)
+    curr_families = _family_entries(current_claims)
 
     prev_ev_by_id: dict[str, dict[str, Any]] = {}
     for item in previous_evidence or []:
@@ -279,36 +323,16 @@ def diff_claims(
             ):
                 continue
 
-        curr_ev_ids = list(curr_claim.get("evidence_ids") or []) if curr_claim else []
-        prev_ev_ids = list(prev_claim.get("evidence_ids") or []) if prev_claim else []
+        # Schema-evolution: a field present on only one side means the envelopes come
+        # from different schema versions (e.g. the four new registry fields).  Real
+        # appear/disappear transitions are reported as availability changes, not as
+        # missing fields.
+        if prev_claim is None or curr_claim is None:
+            continue
+
+        curr_ev_ids = list(curr_claim.get("evidence_ids") or [])
+        prev_ev_ids = list(prev_claim.get("evidence_ids") or [])
         field_prev_evidence = [prev_ev_by_id[pid] for pid in prev_ev_ids if pid in prev_ev_by_id]
-
-        # ── Field was present before but is absent now ──────────────────────
-        if prev_claim is not None and curr_claim is None:
-            changes.append(_change_record(
-                organisation_number, field, "removed",
-                prev_claim.get("value"), None,
-                prev_claim.get("availability"), None,
-                current_evidence_ids=curr_ev_ids,
-                previous_evidence=field_prev_evidence,
-                previous_run_id=previous_run_id,
-            ))
-            continue
-
-        # ── Field is new — absent before, present now ────────────────────────
-        if prev_claim is None and curr_claim is not None:
-            changes.append(_change_record(
-                organisation_number, field, "added",
-                None, curr_claim.get("value"),
-                None, curr_claim.get("availability"),
-                current_evidence_ids=curr_ev_ids,
-                previous_evidence=field_prev_evidence,
-                previous_run_id=previous_run_id,
-            ))
-            continue
-
-        # ── Field exists in both envelopes ───────────────────────────────────
-        assert prev_claim is not None and curr_claim is not None  # narrowing
 
         prev_avail = prev_claim.get("availability")
         curr_avail = curr_claim.get("availability")
@@ -319,7 +343,6 @@ def diff_claims(
 
         # Array-valued claims need item-level stable-id diffing.
         if _is_array_field(field, prev_val) or _is_array_field(field, curr_val):
-            # Coerce both sides to list (may be None when availability is not_available).
             prev_list: list[Any] = prev_val if isinstance(prev_val, list) else []
             curr_list: list[Any] = curr_val if isinstance(curr_val, list) else []
             array_changes = _diff_array(
@@ -329,8 +352,6 @@ def diff_claims(
                 previous_run_id=previous_run_id,
             )
             changes.extend(array_changes)
-            # Availability change on the array claim itself (e.g. available → not_available)
-            # is reported separately only when the array diff did not already capture it.
             if avail_changed and not array_changes:
                 changes.append(_change_record(
                     organisation_number, field, "updated",
@@ -340,8 +361,6 @@ def diff_claims(
                     previous_run_id=previous_run_id,
                 ))
             elif avail_changed and array_changes:
-                # Availability changed alongside item-level changes — attach availability
-                # context to the first array change so it is not silently lost.
                 array_changes[0]["previous_availability"] = prev_avail
                 array_changes[0]["current_availability"] = curr_avail
             continue
@@ -350,7 +369,6 @@ def diff_claims(
         value_changed = not _scalar_equal(prev_val, curr_val, field=field)
 
         if not value_changed and not avail_changed:
-            # Truly unchanged — emit nothing.
             continue
 
         changes.append(_change_record(
@@ -360,6 +378,83 @@ def diff_claims(
             previous_evidence=field_prev_evidence,
             previous_run_id=previous_run_id,
         ))
+
+    # ── Family-level diff ───────────────────────────────────────────────────
+    for family in sorted(CLAIM_FAMILIES):
+        prev_entry = prev_families[family]
+        curr_entry = curr_families[family]
+        p_state = _family_state(prev_entry)
+        c_state = _family_state(curr_entry)
+
+        if p_state == "blob" and c_state == "blob":
+            prev_ph = prev_entry["placeholder"]
+            curr_ph = curr_entry["placeholder"]
+            if prev_ph and curr_ph:
+                prev_val = prev_ph.get("value")
+                curr_val = curr_ph.get("value")
+                prev_avail = prev_ph.get("availability")
+                curr_avail = curr_ph.get("availability")
+                if not _scalar_equal(prev_val, curr_val, field=family) or prev_avail != curr_avail:
+                    curr_ev_ids = list(curr_ph.get("evidence_ids") or [])
+                    prev_ev_ids = list(prev_ph.get("evidence_ids") or [])
+                    field_prev_evidence = [prev_ev_by_id[pid] for pid in prev_ev_ids if pid in prev_ev_by_id]
+                    changes.append(_change_record(
+                        organisation_number, family, "updated",
+                        prev_val, curr_val, prev_avail, curr_avail,
+                        current_evidence_ids=curr_ev_ids,
+                        previous_evidence=field_prev_evidence,
+                        previous_run_id=previous_run_id,
+                    ))
+            continue
+
+        if p_state in {"members", "confirmed_empty"} and c_state in {"members", "confirmed_empty"}:
+            prev_members = prev_entry["members"]
+            curr_members = curr_entry["members"]
+            all_keys = sorted(set(prev_members) | set(curr_members))
+            for key in all_keys:
+                prev_m = prev_members.get(key)
+                curr_m = curr_members.get(key)
+                if prev_m is None and curr_m is not None:
+                    curr_ev_ids = list(curr_m.get("evidence_ids") or [])
+                    changes.append(_change_record(
+                        organisation_number, curr_m["field"], "added",
+                        None, curr_m.get("value"),
+                        None, curr_m.get("availability"),
+                        current_evidence_ids=curr_ev_ids,
+                        previous_evidence=[],
+                        previous_run_id=previous_run_id,
+                        claim_key=key,
+                    ))
+                elif curr_m is None and prev_m is not None:
+                    prev_ev_ids = list(prev_m.get("evidence_ids") or [])
+                    field_prev_evidence = [prev_ev_by_id[pid] for pid in prev_ev_ids if pid in prev_ev_by_id]
+                    changes.append(_change_record(
+                        organisation_number, prev_m["field"], "removed",
+                        prev_m.get("value"), None,
+                        prev_m.get("availability"), None,
+                        current_evidence_ids=[],
+                        previous_evidence=field_prev_evidence,
+                        previous_run_id=previous_run_id,
+                        claim_key=key,
+                    ))
+                elif prev_m is not None and curr_m is not None:
+                    member_field = curr_m["field"]
+                    if not _scalar_equal(prev_m.get("value"), curr_m.get("value"), field=member_field) or prev_m.get("availability") != curr_m.get("availability"):
+                        curr_ev_ids = list(curr_m.get("evidence_ids") or [])
+                        prev_ev_ids = list(prev_m.get("evidence_ids") or [])
+                        field_prev_evidence = [prev_ev_by_id[pid] for pid in prev_ev_ids if pid in prev_ev_by_id]
+                        changes.append(_change_record(
+                            organisation_number, member_field, "updated",
+                            prev_m.get("value"), curr_m.get("value"),
+                            prev_m.get("availability"), curr_m.get("availability"),
+                            current_evidence_ids=curr_ev_ids,
+                            previous_evidence=field_prev_evidence,
+                            previous_run_id=previous_run_id,
+                            claim_key=key,
+                        ))
+            continue
+
+        # Any other combination (absent, unchecked, uncomparable, blob vs members): skip.
 
     return changes
 
@@ -431,6 +526,7 @@ def _change_record(
     current_availability: str | None,
     *,
     array_item_key: str | None = None,
+    claim_key: str | None = None,
     current_evidence_ids: list[str] | None = None,
     previous_evidence: list[dict[str, Any]] | None = None,
     previous_run_id: str | None = None,
@@ -450,4 +546,6 @@ def _change_record(
     }
     if array_item_key is not None:
         record["array_item_key"] = array_item_key
+    if claim_key is not None:
+        record["claim_key"] = claim_key
     return record

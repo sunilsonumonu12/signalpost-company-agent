@@ -4,6 +4,14 @@ from typing import Any
 import urllib.parse
 
 from .changes import diff_claims
+from .claim_builders import (
+    CLAIM_FAMILIES,
+    MEMBER_TO_FAMILY,
+    OPTIONAL_CLAIM_KEYS,
+    build_member_specs,
+    registry_span,
+    module_singleton_span,
+)
 from .vocabulary import (
     MODULE_KEYS,
     SCHEMA_VERSION,
@@ -79,6 +87,21 @@ def assert_claim_schema_integrity(envelope: dict[str, Any]) -> None:
             violations.append(
                 f"claim '{field_name}': missing required field(s): {sorted(missing)}"
             )
+
+        # 1b. No unknown keys allowed (only canonical + optional).
+        extra = set(claim) - CANONICAL_CLAIM_FIELDS - OPTIONAL_CLAIM_KEYS
+        if extra:
+            violations.append(
+                f"claim '{field_name}': unknown claim key(s): {sorted(extra)}"
+            )
+
+        # 1c. Member claims must have a non-empty claim_key.
+        if claim.get("field") in MEMBER_TO_FAMILY:
+            ck = claim.get("claim_key")
+            if not isinstance(ck, str) or not ck:
+                violations.append(
+                    f"claim '{field_name}': member claim requires a non-empty 'claim_key'"
+                )
 
         # 2. field must be a non-empty string.
         if not isinstance(claim.get("field"), str) or not claim["field"].strip():
@@ -161,6 +184,10 @@ REGISTRY_CLAIM_FIELDS = (
     ("bankrupt", "bankrupt"),
     ("liquidating", "liquidating"),
     ("latest_submitted_accounts", "latest_submitted_accounts"),
+    ("industry", ("industry", "beskrivelse")),
+    ("municipality_number", ("business_address", "kommunenummer")),
+    ("postal_address", "postal_address"),
+    ("registry_declared_website", "website"),
 )
 
 MODULE_CLAIM_FIELDS = (
@@ -265,17 +292,25 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = 
     if registry:
         availability = _availability(registry)
         if availability:
-            registry_span = _claim_span(profile, registry)
-            registry_id = add_evidence(
-                "registry_live", registry, claim_span=registry_span,
-                availability=availability,
-            )
+            if availability != "available":
+                registry_id = add_evidence(
+                    "registry_live", registry, claim_span=_claim_span(profile, registry),
+                    availability=availability,
+                )
             for field, path in REGISTRY_CLAIM_FIELDS:
                 val = _nested_get(registry_value, path) if availability == "available" else None
                 field_avail = "not_available" if availability == "available" and _is_missing_value(val) else availability
+                if availability == "available":
+                    field_evidence_id = add_evidence(
+                        f"registry_live:{field}", registry,
+                        claim_span=registry_span(field, val if field_avail == "available" else None),
+                        availability=field_avail,
+                    )
+                else:
+                    field_evidence_id = registry_id
                 claims.append(_claim(
                     field, val if field_avail != "not_available" else None,
-                    field_avail, _confidence(field_avail, official=True), [registry_id],
+                    field_avail, _confidence(field_avail, official=True), [field_evidence_id],
                 ))
             _append_error(errors, "registry_live", registry, availability)
 
@@ -313,8 +348,36 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = 
         if availability is None:
             continue
         value = record.get("value") if availability in {"available", "not_available"} else None
+
+        if field in CLAIM_FAMILIES and availability == "available":
+            specs = build_member_specs(field, value, organisation_number)
+            if specs:
+                for spec in specs:
+                    member_id = add_evidence(
+                        f"{field}:{spec['claim_key']}", record,
+                        claim_span=spec["span"][:400],
+                        availability="available",
+                    )
+                    claims.append(_claim(
+                        spec["field"], spec["value"], "available",
+                        _confidence("available", official=True), [member_id],
+                        claim_key=spec["claim_key"],
+                        reporting_period=spec.get("reporting_period"),
+                        effective_at=spec.get("effective_at"),
+                    ))
+                continue
+            if field != "group":
+                evidence_id = add_evidence(field, record, claim_span=_claim_span(profile, record), availability="not_available")
+                claims.append(_claim(field, None, "not_available", _confidence("not_available"), [evidence_id]))
+                continue
+
+        span = _claim_span(profile, record)
+        if availability == "available":
+            better_span = module_singleton_span(field, value)
+            if better_span:
+                span = better_span
         evidence_id = add_evidence(
-            field, record, claim_span=_claim_span(profile, record),
+            field, record, claim_span=span,
             availability=availability,
         )
         claims.append(_claim(field, value, availability, _confidence(availability, official=True), [evidence_id]))
@@ -393,17 +456,35 @@ def to_public_envelope(row: dict[str, Any], *, metrics: dict[str, Any] | None = 
 
 
 def _complete_claims(claims: list[dict[str, Any]], *, missing_availability: str = "not_available") -> list[dict[str, Any]]:
-    """Return exactly CLAIM_FIELD_ORDER, one claim per field, filling gaps explicitly."""
-    by_field: dict[str, dict[str, Any]] = {}
+    """Return one entry per CLAIM_FIELD_ORDER slot. A family slot is either its member claims (sorted by field, claim_key) or one placeholder claim."""
+    singles: dict[str, dict[str, Any]] = {}
+    members: dict[str, list[dict[str, Any]]] = {family: [] for family in CLAIM_FAMILIES}
+    unknown: list[dict[str, Any]] = []
     for claim in claims:
-        by_field.setdefault(claim["field"], claim)
-    ordered = [
-        by_field.pop(field, None)
-        or _claim(field, None, missing_availability, _confidence(missing_availability), [])
-        for field in CLAIM_FIELD_ORDER
-    ]
-    # Unknown fields stay visible so the validator can flag them.
-    ordered.extend(by_field.values())
+        field = claim["field"]
+        if field in MEMBER_TO_FAMILY:
+            members[MEMBER_TO_FAMILY[field]].append(claim)
+        elif field in CLAIM_FIELD_ORDER:
+            singles.setdefault(field, claim)
+        else:
+            unknown.append(claim)
+    ordered: list[dict[str, Any]] = []
+    for slot in CLAIM_FIELD_ORDER:
+        family_members = members.get(slot) or []
+        if family_members:
+            seen_keys: set[str] = set()
+            for claim in sorted(family_members, key=lambda c: (c["field"], str(c.get("claim_key") or ""))):
+                key = str(claim.get("claim_key") or "")
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                ordered.append(claim)
+            continue
+        ordered.append(
+            singles.get(slot)
+            or _claim(slot, None, missing_availability, _confidence(missing_availability), [])
+        )
+    ordered.extend(unknown)
     return ordered
 
 
@@ -533,6 +614,10 @@ def _claim(
     availability: str,
     confidence: float | None,
     evidence_ids: list[str],
+    *,
+    claim_key: str | None = None,
+    reporting_period: dict[str, Any] | None = None,
+    effective_at: str | None = None,
 ) -> dict[str, Any]:
     if availability not in ALLOWED_AVAILABILITY:
         availability = "failed"
@@ -540,13 +625,20 @@ def _claim(
         availability = "not_available"
         value = None
         confidence = None
-    return {
+    claim = {
         "field": field,
         "value": value,
         "availability": availability,
         "confidence": confidence,
         "evidence_ids": evidence_ids,
     }
+    if claim_key is not None:
+        claim["claim_key"] = claim_key
+    if reporting_period is not None:
+        claim["reporting_period"] = reporting_period
+    if effective_at is not None:
+        claim["effective_at"] = effective_at
+    return claim
 
 
 def _claim_span(profile: dict[str, Any], record: dict[str, Any]) -> str:
